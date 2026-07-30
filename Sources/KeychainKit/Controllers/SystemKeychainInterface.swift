@@ -4,10 +4,16 @@ import Foundation
 internal import os.log
 internal import Security
 
+/// A ``KeychainInterfaceProtocol`` conformance backed by the Security framework.
+///
+/// - Note: On macOS the data-protection keychain requires a signed app with an
+///   application identifier; unsigned processes fail with
+///   ``KeychainError/missingEntitlement``.
 public struct SystemKeychainInterface: KeychainInterfaceProtocol {
 
     // MARK: - Lifecycle Functions
 
+    /// Creates a system keychain interface.
     public init() {
     }
 
@@ -24,6 +30,8 @@ public struct SystemKeychainInterface: KeychainInterfaceProtocol {
             throw .itemNotFound
         case errSecInteractionNotAllowed:
             throw .interactionNotAllowed
+        case errSecMissingEntitlement:
+            throw .missingEntitlement
         default:
             throw .unknownError(status)
         }

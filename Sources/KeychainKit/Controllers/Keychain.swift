@@ -4,6 +4,19 @@ import Observation
 
 internal import Synchronization
 
+/// An observable cache jover the provided raw keychain interface.
+///
+/// `Keychain` reads and writes string values through a backing ``KeychainInterfaceProtocol``,
+/// caching each value in memory after first access and participating in Swift `Observation`
+/// with per-key granularity: observers are notified only for the keys they read, and only
+/// when a stored value actually changes.
+///
+/// The cache assumes this instance is the only writer for its keys; writes made to the
+/// underlying store by other components are not observed once a key is cached. Removals
+/// are always issued to the underlying store, regardless of cache state.
+///
+/// - Note: Failed operations are never cached — after a thrown error, the next access
+///   queries the underlying store again.
 public final class Keychain<Interface>: KeychainProtocol, Sendable where Interface: KeychainInterfaceProtocol {
 
     public typealias Key = KeychainProtocol.Key
@@ -34,6 +47,10 @@ public final class Keychain<Interface>: KeychainProtocol, Sendable where Interfa
 
     // MARK: - Lifecycle Functions
 
+    /// Creates a keychain backed by the given interface.
+    ///
+    /// - Parameters:
+    ///   - interface: The underlying store performing keychain operations.
     public init(interface: Interface) {
         self.interface = interface
     }
@@ -54,6 +71,13 @@ public final class Keychain<Interface>: KeychainProtocol, Sendable where Interfa
 
     // MARK: - KeychainProtocol Conformance
 
+    /// Accesses the value for the given key, discarding any errors.
+    ///
+    /// Reading returns `nil` when the item is absent or the read fails; use
+    /// ``value(forKey:)`` to distinguish the two. Writing a value inserts or updates the
+    /// item; writing `nil` removes it. A failed write is silently dropped — use
+    /// ``updateValue(_:forKey:)`` or ``removeValue(forKey:)`` when failure must be
+    /// observable.
     public subscript(key: Key) -> Value? {
         get {
             return try? self.value(forKey: key)
@@ -67,6 +91,11 @@ public final class Keychain<Interface>: KeychainProtocol, Sendable where Interfa
         }
     }
 
+    /// Reads the value for the given key, returning a default when the item is absent or
+    /// the read fails.
+    ///
+    /// The default is not written to the keychain; subsequent reads evaluate it again
+    /// until a value is stored for the key.
     public subscript(key: Key, default defaultValue: @autoclosure () -> Value) -> Value {
         do {
             if let value = try self.value(forKey: key) {
@@ -79,6 +108,15 @@ public final class Keychain<Interface>: KeychainProtocol, Sendable where Interfa
         }
     }
 
+    /// Returns the value for the given key, or `nil` when no item exists.
+    ///
+    /// An item whose stored data is not valid UTF-8 is treated as absent; the next write
+    /// replaces it.
+    ///
+    /// - Parameters:
+    ///   - key: The attributes identifying the item.
+    /// - Returns: The stored value, or `nil` when absent.
+    /// - Throws: A ``KeychainError`` when the underlying store cannot be queried.
     public func value(forKey key: Key) throws(KeychainError) -> Value? {
         self.access(keyPath: \.[key])
 
@@ -96,6 +134,17 @@ public final class Keychain<Interface>: KeychainProtocol, Sendable where Interfa
         }
     }
 
+    /// Inserts or updates the value for the given key, returning the previous value.
+    ///
+    /// Writing a value equal to the cached value is elided: the underlying store is not
+    /// touched and no observers are notified.
+    ///
+    /// - Parameters:
+    ///   - value: The value to store.
+    ///   - key: The attributes identifying the item.
+    /// - Returns: The previous value, or `nil` when no readable item existed.
+    /// - Throws: A ``KeychainError`` when the underlying store cannot be updated; the
+    ///   cache and store are left unchanged.
     @discardableResult
     public func updateValue(_ value: Value, forKey key: Key) throws(KeychainError) -> Value? {
         if let cachedValue = self.state.withLock({ state in
@@ -161,6 +210,16 @@ public final class Keychain<Interface>: KeychainProtocol, Sendable where Interfa
         }
     }
 
+    /// Removes the value for the given key, returning the removed value.
+    ///
+    /// The removal is always issued to the underlying store, even when the cache reports
+    /// the item as absent, so a stale cache can never shield a persisted item from
+    /// deletion. Removing an absent item is not an error.
+    ///
+    /// - Parameters:
+    ///   - key: The attributes identifying the item.
+    /// - Returns: The removed value, or `nil` when no readable item existed.
+    /// - Throws: A ``KeychainError`` when the underlying store cannot be modified.
     @discardableResult
     public func removeValue(forKey key: Key) throws(KeychainError) -> Value? {
         return try self.withMutation(keyPath: \.[key]) { () throws(KeychainError) in
@@ -190,6 +249,7 @@ extension Keychain where Interface == SystemKeychainInterface {
 
     // MARK: - Lifecycle Functions
 
+    /// Creates a keychain backed by the system keychain.
     public convenience init() {
         self.init(interface: Interface())
     }
