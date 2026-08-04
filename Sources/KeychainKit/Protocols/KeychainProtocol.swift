@@ -54,14 +54,26 @@ public extension KeychainProtocol {
         nonmutating set { self[key.rawValue] = newValue }
     }
 
+    /// Returns the value for the given key, or `nil` when no item exists.
+    ///
+    /// - Throws: A ``KeychainError`` when the store cannot be queried.
+    @inlinable
+    func value<K>(forKey key: K) throws(KeychainError) -> Value? where K: RawRepresentable, K.RawValue == Key {
+        return try self.value(forKey: key.rawValue)
+    }
+
     /// Inserts or updates the value for a raw-representable key, returning the previous
     /// value.
+    ///
+    /// - Throws: A ``KeychainError`` when the store cannot be updated.
     @discardableResult @inlinable
     func updateValue<K>(_ value: Value, forKey key: K) throws(KeychainError) -> Value? where K: RawRepresentable, K.RawValue == Key {
         return try self.updateValue(value, forKey: key.rawValue)
     }
 
     /// Removes the value for a raw-representable key, returning the removed value.
+    ///
+    /// - Throws: A ``KeychainError`` when the store cannot be modified.
     @discardableResult @inlinable
     func removeValue<K>(forKey key: K) throws(KeychainError) -> Value? where K: RawRepresentable, K.RawValue == Key {
         return try self.removeValue(forKey: key.rawValue)

@@ -4,7 +4,7 @@ import Observation
 
 internal import Synchronization
 
-/// An observable cache jover the provided raw keychain interface.
+/// An observable cache over the provided raw keychain interface.
 ///
 /// `Keychain` reads and writes string values through a backing ``KeychainInterfaceProtocol``,
 /// caching each value in memory after first access and participating in Swift `Observation`
@@ -39,7 +39,7 @@ public final class Keychain<Interface>: KeychainProtocol, Sendable where Interfa
 
     // MARK: - Properties
 
-    let interface: Interface
+    public let interface: Interface
 
     private let observationRegistrar: ObservationRegistrar = ObservationRegistrar()
 
@@ -147,6 +147,8 @@ public final class Keychain<Interface>: KeychainProtocol, Sendable where Interfa
     ///   cache and store are left unchanged.
     @discardableResult
     public func updateValue(_ value: Value, forKey key: Key) throws(KeychainError) -> Value? {
+        // cache hot-path; no need to notify observers when we know the requested
+        // value matches our most recently written value.
         if let cachedValue = self.state.withLock({ state in
             state.keychainCache[key]
         }), cachedValue.value == value {
@@ -250,6 +252,7 @@ extension Keychain where Interface == SystemKeychainInterface {
     // MARK: - Lifecycle Functions
 
     /// Creates a keychain backed by the system keychain.
+    @inlinable
     public convenience init() {
         self.init(interface: Interface())
     }
