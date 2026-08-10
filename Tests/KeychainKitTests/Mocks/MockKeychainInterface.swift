@@ -8,7 +8,7 @@ final class MockKeychainInterface: KeychainInterfaceProtocol {
 
     private struct State {
 
-        var injectedError: KeychainError?
+        var errors: Array<KeychainError> = []
 
         var storage: Dictionary<Key, Value>
     }
@@ -25,28 +25,37 @@ final class MockKeychainInterface: KeychainInterfaceProtocol {
 
     // MARK: - Functions
 
-    func injectError(_ error: KeychainError?) {
+    func performWithError<R>(_ error: KeychainError, _ body: () throws(KeychainError) -> R) throws(KeychainError) -> R {
         self.state.withLock { state in
-            state.injectedError = error
+            state.errors.append(error)
         }
+
+        defer {
+            self.state.withLock { state in
+                let removedError = state.errors.removeLast()
+                assert(removedError == error)
+            }
+        }
+
+        return try body()
     }
 
     // MARK: - KeychainInterfaceProtocol Conformance
 
     func value(forKey key: Key) throws(KeychainError) -> Value? {
         return try self.state.withLock { state throws(KeychainError) in
-            if let injectedError = state.injectedError {
-                throw injectedError
+            if let error = state.errors.last {
+                throw error
+            } else {
+                return state.storage[key]
             }
-
-            return state.storage[key]
         }
     }
 
     func insertValue(_ value: Value, forKey key: Key) throws(KeychainError) {
         try self.state.withLock { state throws(KeychainError) in
-            if let injectedError = state.injectedError {
-                throw injectedError
+            if let error = state.errors.last {
+                throw error
             }
 
             guard state.storage[key] == nil else {
@@ -60,8 +69,8 @@ final class MockKeychainInterface: KeychainInterfaceProtocol {
 
     func updateValue(_ value: Value, forKey key: Key) throws(KeychainError) {
         try self.state.withLock { state throws(KeychainError) in
-            if let injectedError = state.injectedError {
-                throw injectedError
+            if let error = state.errors.last {
+                throw error
             }
 
             guard state.storage[key] != nil else {
@@ -75,8 +84,8 @@ final class MockKeychainInterface: KeychainInterfaceProtocol {
 
     func removeValue(forKey key: Key) throws(KeychainError) {
         try self.state.withLock { state throws(KeychainError) in
-            if let injectedError = state.injectedError {
-                throw injectedError
+            if let error = state.errors.last {
+                throw error
             }
 
             _ = state.storage.removeValue(forKey: key)

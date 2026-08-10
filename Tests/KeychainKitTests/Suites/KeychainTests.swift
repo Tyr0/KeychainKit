@@ -311,12 +311,12 @@ struct KeychainTests {
         let interface = MockKeychainInterface(["Test": Data("Value".utf8)])
         let keychain = Keychain(interface: interface)
 
-        interface.injectError(.interactionNotAllowed)
         #expect(throws: KeychainError.interactionNotAllowed) {
-            try keychain.value(forKey: "Test")
+            try interface.performWithError(.interactionNotAllowed) { () throws(KeychainError) in
+                try keychain.value(forKey: "Test")
+            }
         }
 
-        interface.injectError(nil)
         #expect(try keychain.value(forKey: "Test") == "Value")
     }
 
@@ -328,12 +328,12 @@ struct KeychainTests {
         let initialValue = try keychain.value(forKey: "Test")
         #expect(initialValue == "Value")
 
-        interface.injectError(.interactionNotAllowed)
         #expect(throws: KeychainError.interactionNotAllowed) {
-            try keychain.updateValue("Updated", forKey: "Test")
+            try interface.performWithError(.interactionNotAllowed) { () throws(KeychainError) in
+                try keychain.updateValue("Updated", forKey: "Test")
+            }
         }
 
-        interface.injectError(nil)
         #expect(try keychain.value(forKey: "Test") == "Value")
         #expect(try interface.value(forKey: "Test") == Data("Value".utf8))
     }
