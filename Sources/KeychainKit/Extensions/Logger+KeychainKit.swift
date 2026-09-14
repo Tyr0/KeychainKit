@@ -8,5 +8,7 @@ extension Logger {
         static let subsystem = "com.calderone.KeychainKit"
     }
 
+    internal static let keychain = Logger(subsystem: Constants.subsystem, category: "Keychain")
+
     internal static let systemKeychainInterface = Logger(subsystem: Constants.subsystem, category: "SystemKeychainInterface")
 }

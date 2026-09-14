@@ -1,8 +1,7 @@
 
 import Foundation
-import Synchronization
-
-@testable import KeychainKit
+import KeychainKit
+import os.lock
 
 final class MockKeychainInterface: KeychainInterfaceProtocol {
 
@@ -15,17 +14,17 @@ final class MockKeychainInterface: KeychainInterfaceProtocol {
 
     // MARK: - Properties
 
-    private let state: Mutex<State>
+    private let state: OSAllocatedUnfairLock<State>
 
     // MARK: - Lifecycle Functions
 
     init(_ storage: Dictionary<Key, Value> = [:]) {
-        self.state = Mutex(State(storage: storage))
+        self.state = OSAllocatedUnfairLock(initialState: State(storage: storage))
     }
 
     // MARK: - Functions
 
-    func performWithError<R>(_ error: KeychainError, _ body: () throws(KeychainError) -> R) throws(KeychainError) -> R {
+    func performWithError<Result>(_ error: KeychainError, _ body: () throws(KeychainError) -> Result) throws(KeychainError) -> Result {
         self.state.withLock { state in
             state.errors.append(error)
         }
@@ -43,7 +42,7 @@ final class MockKeychainInterface: KeychainInterfaceProtocol {
     // MARK: - KeychainInterfaceProtocol Conformance
 
     func value(forKey key: Key) throws(KeychainError) -> Value? {
-        return try self.state.withLock { state throws(KeychainError) in
+        return try self.state.withLock(throwing: KeychainError.self) { state throws(KeychainError) in
             if let error = state.errors.last {
                 throw error
             } else {
@@ -53,7 +52,7 @@ final class MockKeychainInterface: KeychainInterfaceProtocol {
     }
 
     func insertValue(_ value: Value, forKey key: Key) throws(KeychainError) {
-        try self.state.withLock { state throws(KeychainError) in
+        try self.state.withLock(throwing: KeychainError.self) { state throws(KeychainError) in
             if let error = state.errors.last {
                 throw error
             }
@@ -68,7 +67,7 @@ final class MockKeychainInterface: KeychainInterfaceProtocol {
     }
 
     func updateValue(_ value: Value, forKey key: Key) throws(KeychainError) {
-        try self.state.withLock { state throws(KeychainError) in
+        try self.state.withLock(throwing: KeychainError.self) { state throws(KeychainError) in
             if let error = state.errors.last {
                 throw error
             }
@@ -83,7 +82,7 @@ final class MockKeychainInterface: KeychainInterfaceProtocol {
     }
 
     func removeValue(forKey key: Key) throws(KeychainError) {
-        try self.state.withLock { state throws(KeychainError) in
+        try self.state.withLock(throwing: KeychainError.self) { state throws(KeychainError) in
             if let error = state.errors.last {
                 throw error
             }

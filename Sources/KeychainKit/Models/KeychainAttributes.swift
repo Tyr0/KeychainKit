@@ -8,8 +8,7 @@ import Foundation
 /// app — address disjoint items even when their account names collide.
 ///
 /// A string literal produces attributes whose account is the literal and whose service
-/// is the default, which also allows `KeychainAttributes` to back a raw-value enum of
-/// typed keys.
+/// is the default.
 public struct KeychainAttributes: Equatable, Hashable, Sendable {
 
     private static func makeDefaultServiceName() -> String {
@@ -46,6 +45,14 @@ public struct KeychainAttributes: Equatable, Hashable, Sendable {
     public init(account: String, service: String = KeychainAttributes.defaultService) {
         self.account = account
         self.service = service
+    }
+}
+
+extension KeychainAttributes: CustomStringConvertible {
+
+    /// A textual representation of this instance.
+    public var description: String {
+        return "<\(_typeName(Self.self)): account=\(self.account), service=\(self.service)>"
     }
 }
 

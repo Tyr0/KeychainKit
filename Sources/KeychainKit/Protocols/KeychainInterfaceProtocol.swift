@@ -6,8 +6,7 @@ import Foundation
 /// ``SystemKeychainInterface`` implements this protocol over the Security framework;
 /// tests can conform an in-memory mock and inject it via ``Keychain/init(interface:)``.
 /// Conformances map their underlying failures to ``KeychainError`` — ``Keychain`` relies
-/// on ``KeychainError/duplicateItem`` and ``KeychainError/itemNotFound`` to reconcile
-/// its cache with the store.
+/// on ``KeychainError/itemNotFound`` to insert an item when an update finds none.
 public protocol KeychainInterfaceProtocol: Sendable {
 
     /// The attributes identifying a stored item.

@@ -1,6 +1,8 @@
 
 import Observation
 
+internal import os.log
+
 /// An observable, dictionary-like store of string secrets.
 ///
 /// `KeychainProtocol` is the client-facing surface of the package, implemented by
@@ -14,55 +16,56 @@ public protocol KeychainProtocol: Observable, Sendable {
     /// The stored value type.
     typealias Value = String
 
-    /// Accesses the value for the given key, discarding any errors.
-    ///
-    /// Reading returns `nil` when the item is absent or the read fails. Writing `nil`
-    /// removes the item; a failed write is silently dropped.
-    subscript(key: Key) -> Value? { get nonmutating set }
-
-    /// Reads the value for the given key, returning a default when the item is absent or
-    /// the read fails.
-    subscript(key: Key, default defaultValue: @autoclosure () -> Value) -> Value { get }
-
     /// Returns the value for the given key, or `nil` when no item exists.
     ///
     /// - Throws: A ``KeychainError`` when the store cannot be queried.
     func value(forKey key: Key) throws(KeychainError) -> Value?
 
-    /// Inserts or updates the value for the given key, returning the previous value.
+    /// Inserts or updates the value for the given key.
     ///
     /// - Throws: A ``KeychainError`` when the store cannot be updated.
-    @discardableResult
-    func updateValue(_ value: Value, forKey key: Key) throws(KeychainError) -> Value?
+    func updateValue(_ value: Value, forKey key: Key) throws(KeychainError)
 
-    /// Removes the value for the given key, returning the removed value.
+    /// Removes the value for the given key.
     ///
     /// Removing an absent item is not an error.
     ///
     /// - Throws: A ``KeychainError`` when the store cannot be modified.
-    @discardableResult
-    func removeValue(forKey key: Key) throws(KeychainError) -> Value?
+    func removeValue(forKey key: Key) throws(KeychainError)
 }
 
-public extension KeychainProtocol {
+extension KeychainProtocol {
 
     /// Accesses the value for the given key, discarding any errors.
     ///
     /// Reading returns `nil` when the item is absent or the read fails; use
     /// ``value(forKey:)`` to distinguish the two. Writing a value inserts or updates the
-    /// item; writing `nil` removes it. A failed write is silently dropped — use
+    /// item; writing `nil` removes it. A failed write is logged and discarded — use
     /// ``updateValue(_:forKey:)`` or ``removeValue(forKey:)`` when failure must be
     /// observable.
-    @inlinable
-    subscript(key: Key) -> Value? {
+    public subscript(key: Key) -> Value? {
         get {
-            return try? self.value(forKey: key)
+            do {
+                return try self.value(forKey: key)
+            } catch {
+                Logger.keychain.error("Attempted to read \(key) but received error instead: \(error)")
+            }
+
+            return nil
         }
         nonmutating set {
             if let newValue = newValue {
-                _ = try? self.updateValue(newValue, forKey: key)
+                do {
+                    try self.updateValue(newValue, forKey: key)
+                } catch {
+                    Logger.keychain.error("Attempted to update \(key) but received error instead: \(error)")
+                }
             } else {
-                _ = try? self.removeValue(forKey: key)
+                do {
+                    try self.removeValue(forKey: key)
+                } catch {
+                    Logger.keychain.error("Attempted to update \(key) but received error instead: \(error)")
+                }
             }
         }
     }
@@ -72,8 +75,7 @@ public extension KeychainProtocol {
     ///
     /// The default is not written to the keychain; subsequent reads evaluate it again
     /// until a value is stored for the key.
-    @inlinable
-    subscript(key: Key, default defaultValue: @autoclosure () -> Value) -> Value {
+    public subscript(key: Key, default defaultValue: @autoclosure () -> Value) -> Value {
         do {
             if let value = try self.value(forKey: key) {
                 return value
@@ -81,43 +83,9 @@ public extension KeychainProtocol {
                 return defaultValue()
             }
         } catch {
-            return defaultValue()
+            Logger.keychain.error("Attempted to read \(key) but received error instead: \(error)")
         }
-    }
-}
 
-public extension KeychainProtocol {
-
-    /// Accesses the value for a raw-representable key, such as a case of an enum whose
-    /// raw value is ``KeychainAttributes``.
-    @inlinable
-    subscript<K>(key: K) -> Value? where K: RawRepresentable, K.RawValue == Key {
-        get { self[key.rawValue] }
-        nonmutating set { self[key.rawValue] = newValue }
-    }
-
-    /// Returns the value for the given key, or `nil` when no item exists.
-    ///
-    /// - Throws: A ``KeychainError`` when the store cannot be queried.
-    @inlinable
-    func value<K>(forKey key: K) throws(KeychainError) -> Value? where K: RawRepresentable, K.RawValue == Key {
-        return try self.value(forKey: key.rawValue)
-    }
-
-    /// Inserts or updates the value for a raw-representable key, returning the previous
-    /// value.
-    ///
-    /// - Throws: A ``KeychainError`` when the store cannot be updated.
-    @discardableResult @inlinable
-    func updateValue<K>(_ value: Value, forKey key: K) throws(KeychainError) -> Value? where K: RawRepresentable, K.RawValue == Key {
-        return try self.updateValue(value, forKey: key.rawValue)
-    }
-
-    /// Removes the value for a raw-representable key, returning the removed value.
-    ///
-    /// - Throws: A ``KeychainError`` when the store cannot be modified.
-    @discardableResult @inlinable
-    func removeValue<K>(forKey key: K) throws(KeychainError) -> Value? where K: RawRepresentable, K.RawValue == Key {
-        return try self.removeValue(forKey: key.rawValue)
+        return defaultValue()
     }
 }

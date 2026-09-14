@@ -14,17 +14,18 @@ changes with Swift `Observation`, and inject mock backends for testing.
 password items:
 
 - **Dictionary-like** — read, write, and delete via subscripts; `updateValue`
-  and `removeValue` return the previous value, mirroring `Dictionary`.
+  and `removeValue` mutate storage without returning a previous value.
 - **Observable** — SwiftUI views and `withObservationTracking` clients are
   notified per key, so a change to one key never invalidates readers of
-  another. Writes that don't change the stored value notify no one.
-- **Cached** — values are cached in memory after first access; repeated reads
-  don't touch the keychain.
+  another. Mutation attempts notify even when the value is unchanged or the
+  operation fails.
+- **Fresh reads** — every read queries the keychain, so external modifications
+  are visible on the next read.
 - **Typed throws** — every operation throws `KeychainError`, never an
   existential; subscripts are non-throwing conveniences that discard errors.
 - **Protocolized** — the Security framework sits behind
   `KeychainInterfaceProtocol`, so tests can inject an in-memory mock and
-  exercise real cache and observation behavior.
+  exercise real storage forwarding and observation behavior.
 
 ## Requirements
 
@@ -77,22 +78,10 @@ let key = KeychainAttributes(account: "authToken", service: "com.example.shared"
 keychain[key] = "abc123"
 ```
 
-Because `KeychainAttributes` is `ExpressibleByStringLiteral`, it can back a
-raw-value enum for typed keys:
-
-```swift
-enum SecretKey: KeychainAttributes {
-    case authToken = "auth-token"
-    case refreshToken = "refresh-token"
-}
-
-keychain[SecretKey.authToken] = "abc123"
-```
-
 ### Handling Errors
 
 Subscripts discard errors: a failed read returns `nil` (or the default), and a
-failed write is silently dropped. When failure must be observable — most
+failed write is logged and discarded. When failure must be observable — most
 importantly to distinguish "absent" from "keychain unavailable" — use the
 throwing methods:
 
@@ -134,14 +123,17 @@ struct AccountView: View {
 }
 ```
 
-The view re-renders when `authToken` changes — signing in or out updates it
-automatically — while the token's value never reaches the view hierarchy.
+Writes and removals through this `Keychain` instance invalidate readers of
+`authToken`. External writers, including other `Keychain` instances, do not
+trigger these notifications; a subsequent read retrieves their changes.
+Callbacks run before the mutation and also occur for equal-value writes,
+absent-item removals, and failed operations. A notification is not proof that
+storage changed.
 
 ### Testing
 
-Conform a mock to `KeychainInterfaceProtocol` and inject it — the cache and
-observation layer is exercised for real while the system keychain is never
-touched:
+Conform a mock to `KeychainInterfaceProtocol` and inject it — storage forwarding
+and observation are exercised for real while the system keychain is never touched:
 
 ```swift
 let keychain = Keychain(interface: MockKeychainInterface())
@@ -153,10 +145,18 @@ let keychain = Keychain(interface: MockKeychainInterface())
   keychain with `kSecAttrAccessibleWhenUnlockedThisDeviceOnly`: readable only
   while the device is unlocked, never synced to iCloud, and never migrated to
   a new device.
-- **Caching** — the in-memory cache assumes this instance is the only writer
-  for its keys. Writes from other processes or components are not observed
-  once a key is cached; deletes are always issued to the keychain regardless
-  of cache state.
+- **Freshness** — values and missing items are never cached. Each read performs
+  a synchronous keychain query; repeated reads therefore incur storage latency.
+- **Concurrency** — reads, writes, and removals through one instance share a
+  lock, including operations on different keys. External writers and direct
+  interface calls do not use that lock. Updating an absent item requires an
+  update followed by an insertion; if another writer inserts first, the update
+  is retried once. Errors from that final update propagate to the caller.
+  These operations are not an atomic transaction across writers.
+- **Operation cost** — reads and removals each issue one storage call. Updating
+  an existing item issues one call; inserting an absent item issues two, or
+  three when an insertion collision requires retrying the update.
+  Equal-value writes still reach storage and notify observers.
 - **Values** — values are UTF-8 strings. A pre-existing item whose data is not
   valid UTF-8 reads as absent and is replaced by the next write.
 
@@ -186,13 +186,11 @@ public final class Keychain<Interface>: KeychainProtocol, Sendable where Interfa
     /// Returns the value for a key, or `nil` when absent.
     public func value(forKey key: KeychainAttributes) throws(KeychainError) -> String?
 
-    /// Inserts or updates the value for a key, returning the previous value.
-    @discardableResult
-    public func updateValue(_ value: String, forKey key: KeychainAttributes) throws(KeychainError) -> String?
+    /// Inserts or updates the value for a key.
+    public func updateValue(_ value: String, forKey key: KeychainAttributes) throws(KeychainError)
 
-    /// Removes the value for a key, returning the removed value.
-    @discardableResult
-    public func removeValue(forKey key: KeychainAttributes) throws(KeychainError) -> String?
+    /// Removes the value for a key.
+    public func removeValue(forKey key: KeychainAttributes) throws(KeychainError)
 }
 ```
 
