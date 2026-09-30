@@ -1,66 +1,98 @@
 
-import Foundation
-
-/// The attributes uniquely identifying a keychain item.
+/// The attributes of a stored generic password item.
 ///
-/// A generic password item is keyed by its account and service pair. The service
-/// defaults to ``defaultService``, so distinct apps — and distinct services within an
-/// app — address disjoint items even when their account names collide.
+/// An item's access group, account, service, and synchronizable flag together form its
+/// primary key: no two items may share all four. Its accessibility controls when the
+/// item's data can be read, and does not form part of the key.
 ///
-/// A string literal produces attributes whose account is the literal and whose service
-/// is the default.
+/// Use ``Modifications`` to describe the attributes written by an insert or update.
 public struct KeychainAttributes: Equatable, Hashable, Sendable {
 
-    private static func makeDefaultServiceName() -> String {
-        if let bundleIdentifier = Bundle.main.bundleIdentifier {
-            return bundleIdentifier
-        } else {
-            return ProcessInfo.processInfo.processName
+    /// Attributes written to a generic password item by an insert or update.
+    ///
+    /// Attributes left `nil` are omitted. On insert, the store applies its defaults: an
+    /// empty account and service, the app's first access group, not synchronizable, and
+    /// ``KeychainAccessibility/whenUnlocked``. On update, the stored value is unchanged.
+    public struct Modifications: Equatable, Sendable {
+
+        // MARK: - Properties
+
+        /// When the item's data can be read, or `nil` to leave it unchanged.
+        ///
+        /// - SeeAlso: kSecAttrAccessible
+        public var accessibility: KeychainAccessibility?
+
+        /// The access group the item belongs to, or `nil` to leave it unchanged.
+        ///
+        /// Must be one of the app's access groups.
+        ///
+        /// - SeeAlso: kSecAttrAccessGroup
+        public var accessGroup: String?
+
+        /// The account name of the item, or `nil` to leave it unchanged.
+        ///
+        /// - SeeAlso: kSecAttrAccount
+        public var account: String?
+
+        /// The service the item belongs to, or `nil` to leave it unchanged.
+        ///
+        /// - SeeAlso: kSecAttrService
+        public var service: String?
+
+        /// Whether the item syncs through iCloud Keychain, or `nil` to leave it unchanged.
+        ///
+        /// A synchronizable item may not use a `ThisDeviceOnly` accessibility.
+        ///
+        /// - SeeAlso: kSecAttrSynchronizable
+        public var synchronizable: Bool?
+
+        // MARK: - Lifecycle Functions
+
+        /// Creates attributes to write, omitting any left `nil`.
+        public init(accessibility: KeychainAccessibility? = nil, accessGroup: String? = nil, account: String? = nil, service: String? = nil, synchronizable: Bool? = nil) {
+            self.accessibility = accessibility
+            self.accessGroup = accessGroup
+            self.account = account
+            self.service = service
+            self.synchronizable = synchronizable
         }
     }
 
-    /// The service used when none is specified: the main bundle's identifier, or the
-    /// process name when unavailable (e.g. in command-line tools).
-    public static let defaultService: String = KeychainAttributes.makeDefaultServiceName()
-
     // MARK: - Properties
+
+    /// When the item's data can be read.
+    ///
+    /// - SeeAlso: kSecAttrAccessible
+    public var accessibility: KeychainAccessibility
+
+    /// The access group the item belongs to.
+    ///
+    /// - SeeAlso: kSecAttrAccessGroup
+    public var accessGroup: String
 
     /// The account name of the item.
     ///
-    /// - Seealso: kSecAttrAccount
-    public let account: String
+    /// - SeeAlso: kSecAttrAccount
+    public var account: String
 
     /// The service the item belongs to.
     ///
-    /// - Seealso: kSecAttrService
-    public let service: String
+    /// - SeeAlso: kSecAttrService
+    public var service: String
+
+    /// Whether the item syncs through iCloud Keychain.
+    ///
+    /// - SeeAlso: kSecAttrSynchronizable
+    public var synchronizable: Bool
 
     // MARK: - Lifecycle Functions
 
-    /// Creates attributes for the given account and service.
-    ///
-    /// - Parameters:
-    ///   - account: The account name of the item.
-    ///   - service: The service the item belongs to; defaults to ``defaultService``.
-    public init(account: String, service: String = KeychainAttributes.defaultService) {
+    /// Creates the attributes of a stored item.
+    public init(accessibility: KeychainAccessibility, accessGroup: String, account: String, service: String, synchronizable: Bool) {
+        self.accessibility = accessibility
+        self.accessGroup = accessGroup
         self.account = account
         self.service = service
-    }
-}
-
-extension KeychainAttributes: CustomStringConvertible {
-
-    /// A textual representation of this instance.
-    public var description: String {
-        return "<\(_typeName(Self.self)): account=\(self.account), service=\(self.service)>"
-    }
-}
-
-extension KeychainAttributes: ExpressibleByStringLiteral {
-
-    /// Creates attributes whose account is the literal and whose service is
-    /// ``defaultService``.
-    public init(stringLiteral value: String) {
-        self.init(account: value)
+        self.synchronizable = synchronizable
     }
 }

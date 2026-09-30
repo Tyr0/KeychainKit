@@ -7,19 +7,38 @@ import Testing
 @Suite(ConditionTrait.disabled("System Keybag requires entitlements unavailable in Swift Package Manager"), ParallelizationTrait.serialized)
 struct SystemKeychainInterfaceTests {
 
-    @Test
-    func testEmpty_Read_ReturnsNil() async throws {
-        let keychainInterface = SystemKeychainInterface()
+    private enum Constants {
 
-        let value = try keychainInterface.value(forKey: "Test")
-        #expect(value == nil)
+        static let testAccount: String = "SystemKeychainInterfaceTests.TestAccount"
+
+        static let testService: String = "SystemKeychainInterfaceTests.TestService"
+
+        static let testSynchronizable: Bool = false
+
+        static let testQuery = KeychainQuery(
+            accessGroup: nil,
+            account: Constants.testAccount,
+            service: Constants.testService,
+            synchronizable: .explicit(Constants.testSynchronizable),
+        )
     }
 
     @Test
-    func testEmpty_Remove_DoesNotThrow() async throws {
+    func testEmpty_Read_ThrowsItemNotFound() async throws {
         let keychainInterface = SystemKeychainInterface()
 
-        try keychainInterface.removeValue(forKey: "Test")
+        #expect(throws: KeychainInterfaceError.itemNotFound) {
+            try keychainInterface.value(forQuery: Constants.testQuery)
+        }
+    }
+
+    @Test
+    func testEmpty_Remove_ThrowsItemNotFound() async throws {
+        let keychainInterface = SystemKeychainInterface()
+
+        #expect(throws: KeychainInterfaceError.itemNotFound) {
+            try keychainInterface.removeValue(forQuery: Constants.testQuery)
+        }
     }
 
     @Test
@@ -27,12 +46,16 @@ struct SystemKeychainInterfaceTests {
         let keychainInterface = SystemKeychainInterface()
 
         let data = Data("Value".utf8)
-        try keychainInterface.insertValue(data, forKey: "Test")
+        try keychainInterface.insertValue(data, attributes: KeychainAttributes.Modifications(
+            account: Constants.testAccount,
+            service: Constants.testService,
+            synchronizable: Constants.testSynchronizable,
+        ))
 
-        let value = try keychainInterface.value(forKey: "Test")
+        let value = try keychainInterface.value(forQuery: Constants.testQuery)
         #expect(value == data)
 
-        try keychainInterface.removeValue(forKey: "Test")
+        try keychainInterface.removeValue(forQuery: Constants.testQuery)
     }
 
     @Test
@@ -40,27 +63,31 @@ struct SystemKeychainInterfaceTests {
         let keychainInterface = SystemKeychainInterface()
 
         let data = Data("Value".utf8)
-        try keychainInterface.insertValue(data, forKey: "Test")
+        try keychainInterface.insertValue(data, attributes: KeychainAttributes.Modifications(
+            account: Constants.testAccount,
+            service: Constants.testService,
+            synchronizable: Constants.testSynchronizable,
+        ))
 
-        let value = try keychainInterface.value(forKey: "Test")
+        let value = try keychainInterface.value(forQuery: Constants.testQuery)
         #expect(value == data)
 
         let updatedData = Data("Updated".utf8)
-        try keychainInterface.updateValue(updatedData, forKey: "Test")
+        try keychainInterface.updateValue(updatedData, forQuery: Constants.testQuery)
 
-        let updatedValue = try keychainInterface.value(forKey: "Test")
+        let updatedValue = try keychainInterface.value(forQuery: Constants.testQuery)
         #expect(updatedValue == updatedData)
 
-        try keychainInterface.removeValue(forKey: "Test")
+        try keychainInterface.removeValue(forQuery: Constants.testQuery)
     }
 
     @Test
     func testEmpty_Update_ThrowsItemNotFound() async throws {
         let keychainInterface = SystemKeychainInterface()
 
-        let data = Data("Value".utf8)
-        #expect(throws: KeychainError.itemNotFound) {
-            try keychainInterface.updateValue(data, forKey: "Test")
+        #expect(throws: KeychainInterfaceError.itemNotFound) {
+            let data = Data("Value".utf8)
+            try keychainInterface.updateValue(data, forQuery: Constants.testQuery)
         }
     }
 
@@ -69,16 +96,24 @@ struct SystemKeychainInterfaceTests {
         let keychainInterface = SystemKeychainInterface()
 
         let data = Data("Value".utf8)
-        try keychainInterface.insertValue(data, forKey: "Test")
+        try keychainInterface.insertValue(data, attributes: KeychainAttributes.Modifications(
+            account: Constants.testAccount,
+            service: Constants.testService,
+            synchronizable: Constants.testSynchronizable,
+        ))
 
-        let value = try keychainInterface.value(forKey: "Test")
+        let value = try keychainInterface.value(forQuery: Constants.testQuery)
         #expect(value == data)
 
-        let updatedData = Data("Updated".utf8)
-        #expect(throws: KeychainError.duplicateItem) {
-            try keychainInterface.insertValue(updatedData, forKey: "Test")
+        #expect(throws: KeychainInterfaceError.duplicateItem) {
+            let updatedData = Data("Updated".utf8)
+            try keychainInterface.insertValue(updatedData, attributes: KeychainAttributes.Modifications(
+                account: Constants.testAccount,
+                service: Constants.testService,
+                synchronizable: Constants.testSynchronizable,
+            ))
         }
 
-        try keychainInterface.removeValue(forKey: "Test")
+        try keychainInterface.removeValue(forQuery: Constants.testQuery)
     }
 }

@@ -6,26 +6,50 @@ internal import os.lock
 
 /// A ``KeychainProtocol`` implementation backed by the provided ``KeychainInterfaceProtocol``.
 ///
-/// Every read queries the backing ``KeychainInterfaceProtocol`` without caching values
-/// or absence.
+/// Use ``init(accessGroup:)`` for the system keychain, or inject another interface, such
+/// as an in-memory mock, with ``init(accessGroup:interface:)``.
 ///
-/// Mutation attempts notify observers for the affected key, including equal-value writes,
-/// removal of absent items, and failed operations. Callbacks run before the storage mutation.
-/// Reads, writes, and removals through this instance share a lock. External writers and
-/// direct interface calls are not covered by that lock. Updating a missing item requires
-/// a separate insertion; if another writer inserts first, the update is retried once.
-/// These operations are not an atomic transaction across writers.
+/// ## Storage
 ///
-/// - Note: External modifications are visible on the next read, but do not trigger
-/// this instance's observation callbacks.
+/// Each item is a generic password identified by the item type's
+/// ``KeychainItemProtocol/service``, the account, this instance's ``accessGroup``, and
+/// whether the item's policy is synchronizable. Item types that share a service share
+/// stored items.
+///
+/// Every read queries the backing interface; neither values nor their absence are cached,
+/// so changes made by other writers are visible on the next read.
+///
+/// ## Observation
+///
+/// Reads register observation for their service and account. Updates and removals
+/// through this instance notify those observers, including equal-value writes, removals
+/// of absent items, and failed operations, so a notification does not prove storage
+/// changed. `willSet` is delivered before the lock is taken and `didSet` after it is
+/// released, so observers may read from this instance.
+///
+/// Changes made by other writers, including other `Keychain` instances, do not notify
+/// this instance's observers.
+///
+/// ## Concurrency
+///
+/// Reads, updates, and removals through this instance are serialized by a lock that is
+/// held for the duration of the interface calls. The lock is not reentrant: an interface
+/// must not call back into the same `Keychain`. Other writers are not covered by the lock.
+///
+/// Updating an absent item issues an update, then an insertion; if another writer inserts
+/// first, the update is retried once. These steps are not an atomic transaction across
+/// writers.
 public final class Keychain<Interface>: KeychainProtocol, Sendable where Interface: KeychainInterfaceProtocol {
-
-    public typealias Key = KeychainProtocol.Key
-
-    public typealias Value = KeychainProtocol.Value
 
     // MARK: - Properties
 
+    /// The access group items are scoped to.
+    ///
+    /// When `nil`, new items are inserted into the app's first access group, while reads,
+    /// updates, and removals match items in every access group the app belongs to.
+    public let accessGroup: String?
+
+    /// The store performing keychain operations.
     public let interface: Interface
 
     private let observationRegistrar: ObservationRegistrar = ObservationRegistrar()
@@ -37,13 +61,26 @@ public final class Keychain<Interface>: KeychainProtocol, Sendable where Interfa
     /// Creates a keychain backed by the given interface.
     ///
     /// - Parameters:
-    ///   - interface: The underlying store performing keychain operations.
-    public init(interface: Interface) {
+    ///   - accessGroup: The access group to scope items to, or `nil` for the app's
+    ///     default group on insertion and every group on reads, updates, and removals.
+    ///   - interface: The store performing keychain operations.
+    public init(accessGroup: String? = nil, interface: Interface) {
+        self.accessGroup = accessGroup
         self.interface = interface
         self.state = OSAllocatedUnfairLock()
     }
 
     // MARK: - Private Functions
+
+    private subscript(observationKeyPathForAccount account: String, service service: String) -> Void {
+        fatalError()
+    }
+
+    private func observationKeyPath<Item>(forItem item: Item.Type = Item.self, account: String) -> KeyPath<Keychain, Void> where Item: KeychainItemProtocol {
+        // Keyed by the stored item's service and account rather than the item type, so item
+        // types that share a service also share notifications.
+        return \.[observationKeyPathForAccount: account, service: Item.service]
+    }
 
     private func access<Value>(keyPath: KeyPath<Keychain, Value>) {
         self.observationRegistrar.access(self, keyPath: keyPath)
@@ -57,63 +94,139 @@ public final class Keychain<Interface>: KeychainProtocol, Sendable where Interfa
         return try mutation()
     }
 
+    private func makeKeychainQuery<Item>(_ item: Item.Type = Item.self, account: String) -> KeychainQuery where Item: KeychainItemProtocol {
+        return KeychainQuery(
+            accessGroup: self.accessGroup,
+            account: account,
+            service: Item.service,
+            synchronizable: .explicit(Item.policy.synchronizable),
+        )
+    }
+
+    private func makeInsertAttributes<Item>(_ item: Item.Type = Item.self, account: String) -> KeychainAttributes.Modifications where Item: KeychainItemProtocol {
+        return KeychainAttributes.Modifications(
+            accessibility: Item.policy.accessibility,
+            accessGroup: self.accessGroup,
+            account: account,
+            service: Item.service,
+            synchronizable: Item.policy.synchronizable,
+        )
+    }
+
+    private func makeUpdateAttributes<Item>(_ item: Item.Type = Item.self) -> KeychainAttributes.Modifications where Item: KeychainItemProtocol  {
+        return KeychainAttributes.Modifications()
+    }
+
     // MARK: - KeychainProtocol Conformance
 
-    /// Returns the value for the given key, or `nil` when no item exists.
+    /// Returns the item's value for the given account, or its default value when no item exists.
     ///
-    /// An item whose stored data is not valid UTF-8 is treated as absent; the next write
+    /// Registers observation for the item's service and account, even when the read fails.
+    /// An item whose stored data cannot be decoded is left unchanged; the next write
     /// replaces it.
     ///
     /// - Parameters:
-    ///   - key: The attributes identifying the item.
-    /// - Returns: The stored value, or `nil` when absent.
-    /// - Throws: A ``KeychainError`` when the underlying store cannot be queried.
-    public func value(forKey key: Key) throws(KeychainError) -> Value? {
-        self.access(keyPath: \.[key])
+    ///   - item: The item definition.
+    ///   - account: The account the item is stored under.
+    /// - Returns: The stored value, or ``KeychainItemProtocol/defaultValue`` when no item exists.
+    /// - Throws: ``KeychainError/decodingError(_:)`` when the stored data cannot be decoded,
+    ///   or ``KeychainError/securityError(_:)`` when the store cannot be queried.
+    public func value<Item>(forItem item: Item.Type, account: String) throws(KeychainError) -> Item.Value where Item: KeychainItemProtocol {
+        self.access(keyPath: self.observationKeyPath(forItem: Item.self, account: account))
 
-        return try self.state.withLock(throwing: KeychainError.self) { () throws(KeychainError) in
-            if let data = try self.interface.value(forKey: key),
-               let existingValue = String(validating: data, as: UTF8.self) {
-                return existingValue
-            } else {
-                return nil
+        let keychainRepresentation: KeychainRepresentable.KeychainRepresentation
+        do throws(KeychainInterfaceError) {
+            let query = self.makeKeychainQuery(Item.self, account: account)
+            keychainRepresentation = try self.state.withLock { () throws(KeychainInterfaceError) in
+                return try self.interface.value(forQuery: query)
             }
+        } catch .itemNotFound {
+            return Item.defaultValue
+        } catch {
+            throw .securityError(error)
         }
-    }
 
-    /// Inserts or updates the value for the given key.
+        do throws(DecodingError) {
+            return try Item.Value(keychainRepresentation: keychainRepresentation)
+        } catch {
+            throw .decodingError(error)
+        }
+   }
+
+    /// Inserts or updates the item's value for the given account.
+    ///
+    /// The value is encoded before observers are notified, so an encoding failure does not
+    /// notify. A value whose ``KeychainRepresentable/keychainRepresentation`` is `nil`
+    /// removes the item, as ``removeValue(forItem:account:)`` does.
+    ///
+    /// An existing item's data is replaced and its protection is unchanged. An absent item
+    /// is inserted with the item type's ``KeychainItemProtocol/policy``.
     ///
     /// - Parameters:
     ///   - value: The value to store.
-    ///   - key: The attributes identifying the item.
-    /// - Throws: A ``KeychainError`` when the underlying store cannot be updated.
-    public func updateValue(_ value: Value, forKey key: Key) throws(KeychainError) {
-        let data = Data(value.utf8)
+    ///   - item: The item definition.
+    ///   - account: The account the item is stored under.
+    /// - Throws: ``KeychainError/encodingError(_:)`` when the value cannot be encoded,
+    ///   or ``KeychainError/securityError(_:)`` when the store cannot be updated.
+    public func updateValue<Item>(_ value: Item.Value, forItem item: Item.Type, account: String) throws(KeychainError) where Item: KeychainItemProtocol {
+        let keychainRepresentation: KeychainRepresentable.KeychainRepresentation?
+        do throws(EncodingError) {
+            keychainRepresentation = try value.keychainRepresentation
+        } catch {
+            throw .encodingError(error)
+        }
 
-        try self.withMutation(keyPath: \.[key]) { () throws(KeychainError) in
-            try self.state.withLock(throwing: KeychainError.self) { () throws(KeychainError) in
-                do throws(KeychainError) {
-                    try self.interface.updateValue(data, forKey: key)
-                } catch KeychainError.itemNotFound {
-                    do throws(KeychainError) {
-                        try self.interface.insertValue(data, forKey: key)
-                    } catch KeychainError.duplicateItem {
-                        try self.interface.updateValue(data, forKey: key)
+        guard let keychainRepresentation = keychainRepresentation else {
+            return try self.removeValue(forItem: Item.self, account: account)
+        }
+
+        try self.withMutation(keyPath: self.observationKeyPath(forItem: Item.self, account: account)) { () throws(KeychainError) in
+            try self.state.withLock { () throws(KeychainError) in
+                let query = self.makeKeychainQuery(Item.self, account: account)
+                let updateAttributes = self.makeUpdateAttributes(Item.self)
+
+                do throws(KeychainInterfaceError) {
+                    try self.interface.updateValue(keychainRepresentation, forQuery: query, attributes: updateAttributes)
+                } catch .itemNotFound {
+                    let insertAttributes = self.makeInsertAttributes(Item.self, account: account)
+                    do throws(KeychainInterfaceError) {
+                        try self.interface.insertValue(keychainRepresentation, attributes: insertAttributes)
+                    } catch .duplicateItem {
+                        do throws(KeychainInterfaceError) {
+                            try self.interface.updateValue(keychainRepresentation, forQuery: query, attributes: updateAttributes)
+                        } catch {
+                            throw .securityError(error)
+                        }
+                    } catch {
+                        throw .securityError(error)
                     }
+                } catch {
+                    throw .securityError(error)
                 }
             }
         }
     }
 
-    /// Removes the value for the given key.
+    /// Removes the item's value for the given account.
+    ///
+    /// Removing an absent item is not an error, and still notifies observers.
     ///
     /// - Parameters:
-    ///   - key: The attributes identifying the item.
-    /// - Throws: A ``KeychainError`` when the underlying store cannot be modified.
-    public func removeValue(forKey key: Key) throws(KeychainError) {
-        try self.withMutation(keyPath: \.[key]) { () throws(KeychainError) in
-            try self.state.withLock(throwing: KeychainError.self) { () throws(KeychainError) in
-                try self.interface.removeValue(forKey: key)
+    ///   - item: The item definition.
+    ///   - account: The account the item is stored under.
+    /// - Throws: ``KeychainError/securityError(_:)`` when the store cannot be modified.
+    public func removeValue<Item>(forItem item: Item.Type, account: String) throws(KeychainError) where Item: KeychainItemProtocol {
+        try self.withMutation(keyPath: self.observationKeyPath(forItem: Item.self, account: account)) { () throws(KeychainError) in
+            try self.state.withLock { () throws(KeychainError) in
+                let query = self.makeKeychainQuery(Item.self, account: account)
+
+                do throws(KeychainInterfaceError) {
+                    try self.interface.removeValue(forQuery: query)
+                } catch .itemNotFound {
+                    return
+                } catch {
+                    throw .securityError(error)
+                }
             }
         }
     }
@@ -124,8 +237,12 @@ extension Keychain where Interface == SystemKeychainInterface {
     // MARK: - Lifecycle Functions
 
     /// Creates a keychain backed by the system keychain.
+    ///
+    /// - Parameters:
+    ///   - accessGroup: The access group to scope items to, or `nil` for the app's
+    ///     default group on insertion and every group on reads, updates, and removals.
     @inlinable
-    public convenience init() {
-        self.init(interface: Interface())
+    public convenience init(accessGroup: String? = nil) {
+        self.init(accessGroup: accessGroup, interface: Interface())
     }
 }

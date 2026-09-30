@@ -1,396 +1,357 @@
 
 import Foundation
 import Observation
-import os.lock
 import Testing
 
-import KeychainKit
+@testable import KeychainKit
 
 @Suite
 struct KeychainTests {
 
-    @Test
-    func testEmpty_Read_ReturnsNil() async throws {
-        await withKeychain { keychain in
-            let initialValue = keychain["Test"]
-            #expect(initialValue == nil)
-        }
-    }
+    private enum Constants {
 
-    @Test
-    func testEmpty_ReadWithDefault_ReturnsDefaultValue() async throws {
-        await withKeychain { keychain in
-            let initialValue = keychain["Test", default: "DefaultValue"]
-            #expect(initialValue == "DefaultValue")
-        }
-    }
+        static let testAccount: String = "TestAccount"
 
-    @Test
-    func testEmpty_Read_Update_Read_Remove_ReturnsNil() async throws {
-        try await withKeychain { keychain in
-            let initialValue = keychain["Test"]
-            #expect(initialValue == nil)
-
-            try keychain.updateValue("Value", forKey: "Test")
-
-            let updatedValue = keychain["Test"]
-            #expect(updatedValue == "Value")
-
-            try keychain.removeValue(forKey: "Test")
-            #expect(try keychain.interface.value(forKey: "Test") == nil)
-        }
-    }
-
-    @Test
-    func testEmpty_Read_Update_ReadWithDefault_Remove_ReturnsNil() async throws {
-        try await withKeychain { keychain in
-            let initialValue = keychain["Test"]
-            #expect(initialValue == nil)
-
-            try keychain.updateValue("Value", forKey: "Test")
-
-            let existingValueWithDefault = keychain["Test", default: "DefaultValue"]
-            #expect(existingValueWithDefault == "Value")
-
-            try keychain.removeValue(forKey: "Test")
-            #expect(try keychain.interface.value(forKey: "Test") == nil)
-        }
-    }
-
-    @Test
-    func testObservation_Empty_Read_Update_Observes() async throws {
-        try await withKeychain { keychain in
-            try await confirmation { confirmation in
-                withObservationTracking({
-                    let value = keychain["Test"]
-                    #expect(value == nil)
-                }, onChange: {
-                    confirmation()
-                })
-
-                try keychain.updateValue("Value", forKey: "Test")
+        static let keychainItems: Array<any KeychainItemProtocol.Type> = {
+            func read<ItemValue>(itemValue: ItemValue) -> ItemValue.Item.Type where ItemValue: KeychainItemValueProtocol {
+                return ItemValue.Item.self
             }
 
-            try keychain.removeValue(forKey: "Test")
-            #expect(try keychain.interface.value(forKey: "Test") == nil)
+            return Self.keychainItemValues.map { itemValue in
+                return read(itemValue: itemValue)
+            }
+        }()
+
+        static let keychainItemValues: Array<any KeychainItemValueProtocol> = [
+            KeychainItemValue<TestDataKeychainItem>(value: Data("Bar".utf8)),
+            KeychainItemValue<TestStringKeychainItem>(value: "Bar"),
+            KeychainItemValue<TestOptionalDataKeychainItem>(value: Data("Bar".utf8)),
+            KeychainItemValue<TestOptionalStringKeychainItem>(value: "Bar"),
+        ]
+    }
+
+    @Test(arguments: Constants.keychainItems)
+    func testEmpty_Read_ReturnsDefaultValue(_ item: any KeychainItemProtocol.Type) async throws {
+        func projection<Item>(_ item: Item.Type) async throws where Item: KeychainItemProtocol {
+            try await withKeychain { keychain in
+                let initialValue = try keychain.value(forItem: Item.self, account: Constants.testAccount)
+                #expect(initialValue == Item.defaultValue)
+            }
         }
+
+        try await projection(item)
+    }
+
+    @Test(arguments: Constants.keychainItemValues)
+    func testEmpty_Read_Update_Read_Remove_ReturnsDefaultValue(_ itemValue: any KeychainItemValueProtocol) async throws {
+        func projection<Item>(_ item: Item.Type, value: Item.Value) async throws where Item: KeychainItemProtocol {
+            try await withKeychain { keychain in
+                let initialValue = try keychain.value(forItem: Item.self, account: Constants.testAccount)
+                #expect(initialValue == Item.defaultValue)
+
+                try keychain.updateValue(value, forItem: Item.self, account: Constants.testAccount)
+
+                let updatedValue = try keychain.value(forItem: Item.self, account: Constants.testAccount)
+                #expect(updatedValue == value)
+
+                try keychain.removeValue(forItem: Item.self, account: Constants.testAccount)
+
+                let removedValue = try keychain.value(forItem: Item.self, account: Constants.testAccount)
+                #expect(removedValue == Item.defaultValue)
+            }
+        }
+
+        func unwrap<ItemValue>(_ itemValue: ItemValue) async throws where ItemValue: KeychainItemValueProtocol {
+            try await projection(ItemValue.Item.self, value: itemValue.value)
+        }
+
+        try await unwrap(itemValue)
     }
 
     @Test
-    func testObservation_Update_Read_Update_Observes() async throws {
-        try await withKeychain { keychain in
-            try keychain.updateValue("Value", forKey: "Test")
-
-            let value = keychain["Test"]
-            #expect(value == "Value")
-
-            try await confirmation { confirmation in
-                withObservationTracking({
-                    let value = keychain["Test"]
-                    #expect(value == "Value")
-                }, onChange: {
-                    confirmation()
-                })
-
-                try keychain.updateValue("Updated", forKey: "Test")
+    func testReadInvalidRepresentableValue_ThrowsDecodingError() async throws {
+        try await withKeychain(initialStorage: [
+            KeychainQuery(accessGroup: nil, account: Constants.testAccount, service: TestInvalidKeychainRepresentableKeychainItem.service): Data()
+        ]) { keychain in
+            let thrownError = #expect(throws: KeychainError.self) {
+                try keychain.value(forItem: TestInvalidKeychainRepresentableKeychainItem.self, account: Constants.testAccount)
             }
 
-            try keychain.removeValue(forKey: "Test")
-            #expect(try keychain.interface.value(forKey: "Test") == nil)
+            guard case .decodingError = try #require(thrownError) else {
+                Issue.record("Expected .decodingError, received \(String(describing: thrownError))")
+                return
+            }
         }
     }
 
     @Test
-    func testObservation_Update_DoesNotObserve() async throws {
+    func testUpdateInvalidRepresentableValue_ThrowsEncodingError() async throws {
         try await withKeychain { keychain in
-            try await confirmation(expectedCount: 0) { confirmation in
-                withObservationTracking({
-                    #expect(throws: Never.self) {
-                        try keychain.updateValue("Value", forKey: "Test")
+            let thrownError = #expect(throws: KeychainError.self) {
+                try keychain.updateValue(TestInvalidKeychainRepresentable(), forItem: TestInvalidKeychainRepresentableKeychainItem.self, account: Constants.testAccount)
+            }
+
+            guard case .encodingError = try #require(thrownError) else {
+                Issue.record("Expected .encodingError, received \(String(describing: thrownError))")
+                return
+            }
+        }
+    }
+
+    @Suite
+    struct ObservationTests {
+
+        @Test(arguments: Constants.keychainItems)
+        func testEmpty_Update_Read_Remove_Observes(_ item: any KeychainItemProtocol.Type) async throws {
+            func projection<Item>(_ item: Item.Type) async throws where Item: KeychainItemProtocol {
+                try await withKeychain { keychain in
+                    try keychain.updateValue(Item.defaultValue, forItem: Item.self, account: Constants.testAccount)
+
+                    try await confirmation { confirmation in
+                        withObservationTracking({
+                            #expect(throws: Never.self) {
+                                try keychain.value(forItem: Item.self, account: Constants.testAccount)
+                            }
+                        }, onChange: {
+                            confirmation()
+                        })
+
+                        try keychain.removeValue(forItem: Item.self, account: Constants.testAccount)
                     }
-                }, onChange: {
-                    confirmation()
-                })
-
-                try keychain.updateValue("Updated", forKey: "Test")
+                }
             }
 
-            try keychain.removeValue(forKey: "Test")
-            #expect(try keychain.interface.value(forKey: "Test") == nil)
+            try await projection(item)
         }
-    }
 
-    @Test
-    func testObservation_Remove_DoesNotObserve() async throws {
-        try await withKeychain { keychain in
-            try await confirmation(expectedCount: 0) { confirmation in
-                withObservationTracking({
-                    #expect(throws: Never.self) {
-                        try keychain.removeValue(forKey: "Test")
+        @Test(arguments: Constants.keychainItemValues)
+        func testObservation_Empty_Read_Update_Observes(_ itemValue: any KeychainItemValueProtocol) async throws {
+            func projection<Item>(_ item: Item.Type, value: Item.Value) async throws where Item: KeychainItemProtocol {
+                try await withKeychain { keychain in
+                    try await confirmation { confirmation in
+                        withObservationTracking({
+                            #expect(throws: Never.self) {
+                                try keychain.value(forItem: Item.self, account: Constants.testAccount)
+                            }
+                        }, onChange: {
+                            confirmation()
+                        })
+
+                        try keychain.updateValue(value, forItem: Item.self, account: Constants.testAccount)
                     }
-                }, onChange: {
-                    confirmation()
-                })
 
-                try keychain.updateValue("Updated", forKey: "Test")
+                    try keychain.removeValue(forItem: Item.self, account: Constants.testAccount)
+                }
             }
 
-            try keychain.removeValue(forKey: "Test")
-            #expect(try keychain.interface.value(forKey: "Test") == nil)
-        }
-    }
-
-    @Test
-    func testObservation_Update_ReadWithinChange_ReturnsPreviousValue() async throws {
-        try await withKeychain { keychain in
-            try keychain.updateValue("Value", forKey: "Test")
-
-            try await confirmation { confirmation in
-                withObservationTracking({
-                    let value = keychain["Test"]
-                    #expect(value == "Value")
-                }, onChange: {
-                    let value = keychain["Test"]
-                    #expect(value == "Value")
-                    confirmation()
-                })
-
-                try keychain.updateValue("Updated", forKey: "Test")
+            func unwrap<ItemValue>(_ itemValue: ItemValue) async throws where ItemValue: KeychainItemValueProtocol {
+                try await projection(ItemValue.Item.self, value: itemValue.value)
             }
 
-            try keychain.removeValue(forKey: "Test")
-            #expect(try keychain.interface.value(forKey: "Test") == nil)
+            try await unwrap(itemValue)
         }
-    }
 
-    @Test
-    func testObservation_Update_UpdateWithinChange_PreservesOuterValue() async throws {
-        try await withKeychain { keychain in
-            try keychain.updateValue("Value", forKey: "Test")
+        @Test(arguments: Constants.keychainItemValues)
+        func testObservation_Update_DoesNotObserve(_ itemValue: any KeychainItemValueProtocol) async throws {
+            func projection<Item>(_ item: Item.Type, value: Item.Value) async throws where Item: KeychainItemProtocol {
+                try await withKeychain { keychain in
+                    try await confirmation(expectedCount: 0) { confirmation in
+                        withObservationTracking({
+                            #expect(throws: Never.self) {
+                                try keychain.updateValue(value, forItem: Item.self, account: Constants.testAccount)
+                            }
+                        }, onChange: {
+                            confirmation()
+                        })
 
-            try await confirmation { confirmation in
-                withObservationTrackingOnce({
-                    let value = keychain["Test"]
-                    #expect(value == "Value")
-                }, willSet: {
-                    #expect(throws: Never.self) {
-                        try keychain.updateValue("Nested", forKey: "Test")
+                        try keychain.updateValue(value, forItem: Item.self, account: Constants.testAccount)
                     }
-                    confirmation()
-                })
 
-                try keychain.updateValue("Updated", forKey: "Test")
+                    try keychain.removeValue(forItem: Item.self, account: Constants.testAccount)
+                }
             }
 
-            #expect(try keychain.value(forKey: "Test") == "Updated")
-            try keychain.removeValue(forKey: "Test")
-            #expect(try keychain.interface.value(forKey: "Test") == nil)
+            func unwrap<ItemValue>(_ itemValue: ItemValue) async throws where ItemValue: KeychainItemValueProtocol {
+                try await projection(ItemValue.Item.self, value: itemValue.value)
+            }
+
+            try await unwrap(itemValue)
         }
-    }
 
-    @Test
-    func testObservation_Update_RemoveWithinChange_PreservesOuterValue() async throws {
-        try await withKeychain { keychain in
-            try keychain.updateValue("Value", forKey: "Test")
+        @Test(arguments: Constants.keychainItemValues)
+        func testObservation_Remove_DoesNotObserve(_ itemValue: any KeychainItemValueProtocol) async throws {
+            func projection<Item>(_ item: Item.Type, value: Item.Value) async throws where Item: KeychainItemProtocol {
+                try await withKeychain { keychain in
+                    try await confirmation(expectedCount: 0) { confirmation in
+                        withObservationTracking({
+                            #expect(throws: Never.self) {
+                                try keychain.removeValue(forItem: Item.self, account: Constants.testAccount)
+                            }
+                        }, onChange: {
+                            confirmation()
+                        })
 
-            try await confirmation { confirmation in
-                withObservationTrackingOnce({
-                    let value = keychain["Test"]
-                    #expect(value == "Value")
-                }, willSet: {
-                    #expect(throws: Never.self) {
-                        try keychain.removeValue(forKey: "Test")
+                        try keychain.updateValue(value, forItem: Item.self, account: Constants.testAccount)
                     }
-                    confirmation()
-                })
 
-                try keychain.updateValue("Updated", forKey: "Test")
+                    try keychain.removeValue(forItem: Item.self, account: Constants.testAccount)
+                }
             }
 
-            #expect(try keychain.value(forKey: "Test") == "Updated")
-            try keychain.removeValue(forKey: "Test")
-            #expect(try keychain.interface.value(forKey: "Test") == nil)
-        }
-    }
-
-    // MARK: - External Changes
-
-    @Test
-    func testRead_ExternalChanges_ReturnsCurrentStorage() throws {
-        let interface = MockKeychainInterface()
-        let keychain = Keychain(interface: interface)
-
-        #expect(try keychain.value(forKey: "Test") == nil)
-        try interface.insertValue(Data("External".utf8), forKey: "Test")
-        #expect(try keychain.value(forKey: "Test") == "External")
-        try interface.updateValue(Data("Replaced".utf8), forKey: "Test")
-        #expect(try keychain.value(forKey: "Test") == "Replaced")
-        try interface.removeValue(forKey: "Test")
-        #expect(try keychain.value(forKey: "Test") == nil)
-    }
-
-    @Test
-    func testUpdate_PreviouslyReadValue_OverwritesExternalChange() throws {
-        let interface = MockKeychainInterface(["Test": Data("Original".utf8)])
-        let keychain = Keychain(interface: interface)
-
-        #expect(try keychain.value(forKey: "Test") == "Original")
-        try interface.updateValue(Data("External".utf8), forKey: "Test")
-        try keychain.updateValue("Original", forKey: "Test")
-        #expect(try interface.value(forKey: "Test") == Data("Original".utf8))
-
-        try interface.removeValue(forKey: "Test")
-        try keychain.updateValue("Original", forKey: "Test")
-        #expect(try interface.value(forKey: "Test") == Data("Original".utf8))
-    }
-
-    @Test
-    func testRemove_ExternalInsertion_RemovesItem() throws {
-        let interface = MockKeychainInterface()
-        let keychain = Keychain(interface: interface)
-
-        #expect(try keychain.value(forKey: "Test") == nil)
-        try interface.insertValue(Data("External".utf8), forKey: "Test")
-        try keychain.removeValue(forKey: "Test")
-        #expect(try interface.value(forKey: "Test") == nil)
-    }
-
-    @Test
-    func testUpdate_ExternalInsertion_RetriesUpdate() throws {
-        let interface = InsertionRaceKeychainInterface()
-        let keychain = Keychain(interface: interface)
-
-        try keychain.updateValue("Requested", forKey: "Test")
-
-        #expect(interface.operations.withLock { $0 } == ["update", "insert", "update"])
-        #expect(try interface.value(forKey: "Test") == Data("Requested".utf8))
-    }
-
-    // MARK: - Errors
-
-    @Test
-    func testRead_Error_PropagatesAndRecovers() throws {
-        let interface = MockKeychainInterface(["Test": Data("Value".utf8)])
-        let keychain = Keychain(interface: interface)
-
-        #expect(try keychain.value(forKey: "Test") == "Value")
-        #expect(throws: KeychainError.interactionNotAllowed) {
-            try interface.performWithError(.interactionNotAllowed) { () throws(KeychainError) in
-                _ = try keychain.value(forKey: "Test")
+            func unwrap<ItemValue>(_ itemValue: ItemValue) async throws where ItemValue: KeychainItemValueProtocol {
+                try await projection(ItemValue.Item.self, value: itemValue.value)
             }
+
+            try await unwrap(itemValue)
         }
-        #expect(try keychain.value(forKey: "Test") == "Value")
-    }
 
-    @Test(arguments: [false, true])
-    func testMutation_Error_PreservesStorageAndRecovers(remove: Bool) throws {
-        let interface = MockKeychainInterface(["Test": Data("Value".utf8)])
-        let keychain = Keychain(interface: interface)
+        @Test(arguments: Constants.keychainItemValues)
+        func testObservation_Update_ReadWithinChange_ReturnsPreviousValue(_ itemValue: any KeychainItemValueProtocol) async throws {
+            func projection<Item>(_ item: Item.Type, value: Item.Value) async throws where Item: KeychainItemProtocol {
+                try await withKeychain { keychain in
+                    try keychain.updateValue(value, forItem: Item.self, account: Constants.testAccount)
 
-        #expect(throws: KeychainError.interactionNotAllowed) {
-            try interface.performWithError(.interactionNotAllowed) { () throws(KeychainError) in
-                if remove {
-                    try keychain.removeValue(forKey: "Test")
-                } else {
-                    try keychain.updateValue("Updated", forKey: "Test")
+                    try await confirmation { confirmation in
+                        withObservationTracking({
+                            #expect(throws: Never.self) {
+                                try keychain.value(forItem: Item.self, account: Constants.testAccount)
+                            }
+                        }, onChange: {
+                            #expect(throws: Never.self) {
+                                let currentValue = try keychain.value(forItem: Item.self, account: Constants.testAccount)
+                                #expect(currentValue == value)
+                            }
+                            confirmation()
+                        })
+
+                        try keychain.removeValue(forItem: Item.self, account: Constants.testAccount)
+                    }
+                }
+            }
+
+            func unwrap<ItemValue>(_ itemValue: ItemValue) async throws where ItemValue: KeychainItemValueProtocol {
+                try await projection(ItemValue.Item.self, value: itemValue.value)
+            }
+
+            try await unwrap(itemValue)
+        }
+
+        @Test(arguments: Constants.keychainItemValues)
+        func testObservation_Update_RemoveWithinChange_PreservesOuterValue(_ itemValue: any KeychainItemValueProtocol) async throws {
+            func projection<Item>(_ item: Item.Type, value: Item.Value) async throws where Item: KeychainItemProtocol {
+                try await withKeychain { keychain in
+                    try await confirmation { confirmation in
+                        withObservationTrackingOnce({
+                            #expect(throws: Never.self) {
+                                try keychain.value(forItem: Item.self, account: Constants.testAccount)
+                            }
+                        }, willSet: {
+                            #expect(throws: Never.self) {
+                                try keychain.removeValue(forItem: Item.self, account: Constants.testAccount)
+                            }
+                            confirmation()
+                        })
+
+                        try keychain.updateValue(value, forItem: Item.self, account: Constants.testAccount)
+
+                        let updatedValue = try keychain.value(forItem: Item.self, account: Constants.testAccount)
+                        #expect(updatedValue == value)
+                    }
+
+                    try keychain.removeValue(forItem: Item.self, account: Constants.testAccount)
+                }
+            }
+
+            func unwrap<ItemValue>(_ itemValue: ItemValue) async throws where ItemValue: KeychainItemValueProtocol {
+                try await projection(ItemValue.Item.self, value: itemValue.value)
+            }
+
+            try await unwrap(itemValue)
+        }
+
+        @Test(arguments: Constants.keychainItemValues)
+        func testObservation_OtherAccount_DoesNotObserve(_ itemValue: any KeychainItemValueProtocol) async throws {
+            func projection<Item>(_ item: Item.Type, value: Item.Value) async throws where Item: KeychainItemProtocol {
+                try await withKeychain { keychain in
+                    try await confirmation(expectedCount: 0) { confirmation in
+                        withObservationTracking({
+                            #expect(throws: Never.self) {
+                                try keychain.value(forItem: Item.self, account: Constants.testAccount)
+                            }
+                        }, onChange: {
+                            confirmation()
+                        })
+
+                        try keychain.updateValue(value, forItem: Item.self, account: "OtherAccount")
+                    }
+                }
+            }
+
+            func unwrap<ItemValue>(_ itemValue: ItemValue) async throws where ItemValue: KeychainItemValueProtocol {
+                try await projection(ItemValue.Item.self, value: itemValue.value)
+            }
+
+            try await unwrap(itemValue)
+        }
+
+        @Test
+        func testObservation_SharedService_Observes() async throws {
+            enum TestAliasedStringKeychainItem: KeychainItemProtocol {
+                static let defaultValue = TestStringKeychainItem.defaultValue
+                static let service = TestStringKeychainItem.service
+            }
+
+            try await withKeychain { keychain in
+                try await confirmation { confirmation in
+                    withObservationTracking({
+                        #expect(throws: Never.self) {
+                            try keychain.value(forItem: TestStringKeychainItem.self, account: Constants.testAccount)
+                        }
+                    }, onChange: {
+                        confirmation()
+                    })
+
+                    try keychain.updateValue("Bar", forItem: TestAliasedStringKeychainItem.self, account: Constants.testAccount)
                 }
             }
         }
-        #expect(try interface.value(forKey: "Test") == Data("Value".utf8))
-        if remove {
-            try keychain.removeValue(forKey: "Test")
-            #expect(try interface.value(forKey: "Test") == nil)
-        } else {
-            try keychain.updateValue("Updated", forKey: "Test")
-            #expect(try interface.value(forKey: "Test") == Data("Updated".utf8))
-        }
-    }
 
-    @Test
-    func testObservation_ExternalUpdate_DoesNotObserve() async throws {
-        let interface = MockKeychainInterface()
-        let keychain = Keychain(interface: interface)
+        @Test(arguments: Constants.keychainItemValues)
+        func testObservation_FailedUpdate_Observes(_ itemValue: any KeychainItemValueProtocol) async throws {
+            func projection<Item>(_ item: Item.Type, value: Item.Value) async throws where Item: KeychainItemProtocol {
+                try await withKeychain { keychain in
+                    try await confirmation { confirmation in
+                        withObservationTracking({
+                            #expect(throws: Never.self) {
+                                try keychain.value(forItem: Item.self, account: Constants.testAccount)
+                            }
+                        }, onChange: {
+                            confirmation()
+                        })
 
-        try await confirmation(expectedCount: 0) { confirmation in
-            withObservationTracking({
-                _ = keychain["Test"]
-            }, onChange: {
-                confirmation()
-            })
-            try interface.insertValue(Data("External".utf8), forKey: "Test")
-            #expect(try keychain.value(forKey: "Test") == "External")
-        }
-    }
+                        let thrownError = try #require(keychain.interface.performWithError(.interactionNotAllowed) {
+                            #expect(throws: KeychainError.self) {
+                                try keychain.updateValue(value, forItem: Item.self, account: Constants.testAccount)
+                            }
+                        })
+                        #expect(thrownError ~= .interactionNotAllowed)
+                    }
+                }
+            }
 
-    @Test
-    func testObservation_UpdateSameValue_Observes() async throws {
-        let keychain = Keychain(interface: MockKeychainInterface(["Test": Data("Value".utf8)]))
+            func unwrap<ItemValue>(_ itemValue: ItemValue) async throws where ItemValue: KeychainItemValueProtocol {
+                try await projection(ItemValue.Item.self, value: itemValue.value)
+            }
 
-        try await confirmation { confirmation in
-            withObservationTracking({
-                _ = keychain["Test"]
-            }, onChange: {
-                confirmation()
-            })
-            try keychain.updateValue("Value", forKey: "Test")
-        }
-        #expect(try keychain.value(forKey: "Test") == "Value")
-    }
-
-    // MARK: - Invalid Data
-
-    @Test
-    func testRead_InvalidUTF8_ReturnsNil() async throws {
-        try await withKeychain(initialStorage: ["Test": Data([0xFF, 0xFE, 0xFD])]) { keychain in
-            let value = try keychain.value(forKey: "Test")
-            #expect(value == nil)
-        }
-    }
-
-    @Test
-    func testUpdate_InvalidUTF8_OverwritesItem() async throws {
-        try await withKeychain(initialStorage: ["Test": Data([0xFF, 0xFE, 0xFD])]) { keychain in
-            let existingValue = try keychain.value(forKey: "Test")
-            #expect(existingValue == nil)
-
-            try keychain.updateValue("Updated", forKey: "Test")
-
-            let updatedValue = try keychain.value(forKey: "Test")
-            #expect(updatedValue == "Updated")
+            try await unwrap(itemValue)
         }
     }
 }
 
-private func withKeychain<Output, Failure>(initialStorage storage: Dictionary<KeychainAttributes, Data> = [:], perform body: (_ keychain: Keychain<MockKeychainInterface>) async throws(Failure) -> Output) async throws(Failure) -> Output {
+private func withKeychain<Output, Failure>(initialStorage storage: Dictionary<KeychainQuery, Data> = [:], perform body: (_ keychain: Keychain<MockKeychainInterface>) async throws(Failure) -> Output) async throws(Failure) -> Output {
     let interface = MockKeychainInterface(storage)
+
     let keychain = Keychain(interface: interface)
 
     return try await body(keychain)
-}
-
-private struct InsertionRaceKeychainInterface: KeychainInterfaceProtocol {
-
-    let operations = OSAllocatedUnfairLock(initialState: Array<String>())
-
-    private let storage = MockKeychainInterface()
-
-    func value(forKey key: Key) throws(KeychainError) -> Value? {
-        return try self.storage.value(forKey: key)
-    }
-
-    func updateValue(_ value: Value, forKey key: Key) throws(KeychainError) {
-        self.operations.withLock { $0.append("update") }
-        try self.storage.updateValue(value, forKey: key)
-    }
-
-    func insertValue(_ value: Value, forKey key: Key) throws(KeychainError) {
-        self.operations.withLock { $0.append("insert") }
-        // Another writer inserts after the initial update found no item.
-        try self.storage.insertValue(Data("External".utf8), forKey: key)
-        try self.storage.insertValue(value, forKey: key)
-    }
-
-    func removeValue(forKey key: Key) throws(KeychainError) {
-        try self.storage.removeValue(forKey: key)
-    }
 }

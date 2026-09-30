@@ -6,9 +6,16 @@ internal import Security
 
 /// A ``KeychainInterfaceProtocol`` conformance backed by the Security framework.
 ///
+/// Stores generic password items (`kSecClassGenericPassword`) in the data-protection
+/// keychain (`kSecUseDataProtectionKeychain`) on every platform. Each call builds a new
+/// query and passes Security's status code through unchanged as a ``KeychainInterfaceError``.
+///
+/// Updates and removals affect every item matching the query, matching the behavior of
+/// `SecItemUpdate` and `SecItemDelete`.
+///
 /// - Note: On macOS the data-protection keychain requires a signed app with an
-///   application identifier; unsigned processes fail with
-///   ``KeychainError/missingEntitlement``.
+///   application identifier; unsigned processes, including Swift package test runners,
+///   fail with ``KeychainInterfaceError/missingEntitlement``.
 public struct SystemKeychainInterface: KeychainInterfaceProtocol {
 
     // MARK: - Lifecycle Functions
@@ -19,102 +26,139 @@ public struct SystemKeychainInterface: KeychainInterfaceProtocol {
 
     // MARK: - Private Functions
 
-    private static func withSecurityInvocation(perform body: () -> OSStatus) throws(KeychainError) {
+    private static func withSecurityInvocation(perform body: () -> OSStatus) throws(KeychainInterfaceError) {
         let status = body()
-        switch status {
-        case errSecSuccess:
-            return
-        case errSecDuplicateItem:
-            throw .duplicateItem
-        case errSecItemNotFound:
-            throw .itemNotFound
-        case errSecInteractionNotAllowed:
-            throw .interactionNotAllowed
-        case errSecMissingEntitlement:
-            throw .missingEntitlement
-        default:
-            throw .unknownError(status)
+        if status != errSecSuccess {
+            throw KeychainInterfaceError(rawValue: status)
+        }
+    }
+
+    private static func apply(_ modifications: KeychainAttributes.Modifications, to attributes: inout Dictionary<CFString, CFTypeRef>) {
+        if let accessibility = modifications.accessibility {
+            attributes[kSecAttrAccessible] = accessibility.securityValue
+        }
+
+        if let accessGroup = modifications.accessGroup {
+            attributes[kSecAttrAccessGroup] = accessGroup.securityValue
+        }
+
+        if let account = modifications.account {
+            attributes[kSecAttrAccount] = account.securityValue
+        }
+
+        if let service = modifications.service {
+            attributes[kSecAttrService] = service.securityValue
+        }
+
+        if let synchronizable = modifications.synchronizable {
+            attributes[kSecAttrSynchronizable] = synchronizable.securityValue
         }
     }
 
     // MARK: - KeychainInterfaceProtocol Conformance
 
-    public nonisolated func value(forKey key: Key) throws(KeychainError) -> Value? {
-        let query: Dictionary<CFString, Any> = [
-            kSecAttrAccount: key.account,
-            kSecAttrService: key.service,
+    public nonisolated func value(forQuery query: borrowing KeychainQuery) throws(KeychainInterfaceError) -> Value {
+        var matching: Dictionary<CFString, CFTypeRef> = [
+            kSecAttrSynchronizable: query.synchronizable.securityValue,
             kSecClass: kSecClassGenericPassword,
             kSecMatchLimit: kSecMatchLimitOne,
-            kSecReturnData: true,
-            kSecUseDataProtectionKeychain: true,
+            kSecReturnData: kCFBooleanTrue,
+            kSecUseDataProtectionKeychain: kCFBooleanTrue,
         ]
 
-        do throws(KeychainError) {
-            var value: CFTypeRef?
-            try Self.withSecurityInvocation {
-                return SecItemCopyMatching(query as CFDictionary, &value)
-            }
+        if let accessGroup = query.accessGroup {
+            matching[kSecAttrAccessGroup] = accessGroup.securityValue
+        }
 
-            if let value = value as? Data {
-                return value
-            } else if let value = value {
-                Logger.systemKeychainInterface.error("Invalid query result type: \(type(of: value))")
-                throw .itemNotFound
-            } else {
-                Logger.systemKeychainInterface.error("Invalid success without result.")
-                throw .itemNotFound
-            }
-        } catch .itemNotFound {
-            return nil
+        if let account = query.account {
+            matching[kSecAttrAccount] = account.securityValue
+        }
+
+        if let service = query.service {
+            matching[kSecAttrService] = service.securityValue
+        }
+
+        var value: CFTypeRef?
+        try Self.withSecurityInvocation {
+            return SecItemCopyMatching(matching as CFDictionary, &value)
+        }
+
+        if let value = value as? Value {
+            return value
+        } else if let value = value {
+            Logger.systemKeychainInterface.error("Invalid query result type: \(type(of: value))")
+            throw .internalError
+        } else {
+            Logger.systemKeychainInterface.error("Invalid success without result.")
+            throw .internalError
         }
     }
 
-    public nonisolated func insertValue(_ value: Value, forKey key: Key) throws(KeychainError) {
-        let attributes: Dictionary<CFString, Any> = [
-            kSecAttrAccessible: kSecAttrAccessibleWhenUnlockedThisDeviceOnly,
-            kSecAttrAccount: key.account,
-            kSecAttrService: key.service,
+    public nonisolated func insertValue(_ value: Value, attributes modifications: borrowing KeychainAttributes.Modifications) throws(KeychainInterfaceError) {
+        var attributes: Dictionary<CFString, CFTypeRef> = [
             kSecClass: kSecClassGenericPassword,
-            kSecUseDataProtectionKeychain: true,
-            kSecValueData: value,
+            kSecUseDataProtectionKeychain: kCFBooleanTrue,
+            kSecValueData: value.securityValue,
         ]
+
+        Self.apply(modifications, to: &attributes)
 
         try Self.withSecurityInvocation {
             return SecItemAdd(attributes as CFDictionary, nil)
         }
     }
 
-    public nonisolated func updateValue(_ value: Value, forKey key: Key) throws(KeychainError) {
-        let query: Dictionary<CFString, Any> = [
-            kSecAttrAccount: key.account,
-            kSecAttrService: key.service,
+    public nonisolated func updateValue(_ value: Value, forQuery query: borrowing KeychainQuery, attributes modifications: borrowing KeychainAttributes.Modifications) throws(KeychainInterfaceError) {
+        var matching: Dictionary<CFString, CFTypeRef> = [
+            kSecAttrSynchronizable: query.synchronizable.securityValue,
             kSecClass: kSecClassGenericPassword,
-            kSecUseDataProtectionKeychain: true,
+            kSecUseDataProtectionKeychain: kCFBooleanTrue,
         ]
 
-        let attributes: Dictionary<CFString, Any> = [
-            kSecValueData: value,
+        if let accessGroup = query.accessGroup {
+            matching[kSecAttrAccessGroup] = accessGroup.securityValue
+        }
+
+        if let account = query.account {
+            matching[kSecAttrAccount] = account.securityValue
+        }
+
+        if let service = query.service {
+            matching[kSecAttrService] = service.securityValue
+        }
+
+        var attributes: Dictionary<CFString, CFTypeRef> = [
+            kSecValueData: value.securityValue,
         ]
+
+        Self.apply(modifications, to: &attributes)
 
         try Self.withSecurityInvocation {
-            return SecItemUpdate(query as CFDictionary, attributes as CFDictionary)
+            return SecItemUpdate(matching as CFDictionary, attributes as CFDictionary)
         }
     }
 
-    public nonisolated func removeValue(forKey key: Key) throws(KeychainError) {
-        let query: Dictionary<CFString, Any> = [
-            kSecAttrAccount: key.account,
-            kSecAttrService: key.service,
+    public nonisolated func removeValue(forQuery query: borrowing KeychainQuery) throws(KeychainInterfaceError) {
+        var matching: Dictionary<CFString, CFTypeRef> = [
+            kSecAttrSynchronizable: query.synchronizable.securityValue,
             kSecClass: kSecClassGenericPassword,
-            kSecUseDataProtectionKeychain: true,
+            kSecUseDataProtectionKeychain: kCFBooleanTrue,
         ]
 
-        do throws(KeychainError) {
-            try Self.withSecurityInvocation {
-                return SecItemDelete(query as CFDictionary)
-            }
-        } catch .itemNotFound {
-            return
+        if let accessGroup = query.accessGroup {
+            matching[kSecAttrAccessGroup] = accessGroup.securityValue
+        }
+
+        if let account = query.account {
+            matching[kSecAttrAccount] = account.securityValue
+        }
+
+        if let service = query.service {
+            matching[kSecAttrService] = service.securityValue
+        }
+
+        try Self.withSecurityInvocation {
+            return SecItemDelete(matching as CFDictionary)
         }
     }
 }

@@ -3,89 +3,87 @@ import Observation
 
 internal import os.log
 
-/// An observable, dictionary-like store of string secrets.
+/// An observable store of typed keychain items.
 ///
 /// `KeychainProtocol` is the client-facing surface of the package, implemented by
-/// ``Keychain``. The named methods throw ``KeychainError``; the subscripts are
-/// non-throwing conveniences that discard errors.
+/// ``Keychain``. Each item is described by a type conforming to ``KeychainItemProtocol``
+/// and addressed by that type together with an account name.
+///
+/// The named methods throw ``KeychainError``. The subscript is a non-throwing
+/// convenience that logs and discards errors.
+///
+/// Depend on `KeychainProtocol` rather than a concrete ``Keychain`` so an in-memory
+/// implementation can be injected in tests.
 public protocol KeychainProtocol: Observable, Sendable {
 
-    /// The attributes identifying a stored item.
-    typealias Key = KeychainAttributes
-
-    /// The stored value type.
-    typealias Value = String
-
-    /// Returns the value for the given key, or `nil` when no item exists.
+    /// Returns the item's value for the given account, or its default value when no item exists.
     ///
-    /// - Throws: A ``KeychainError`` when the store cannot be queried.
-    func value(forKey key: Key) throws(KeychainError) -> Value?
+    /// - Parameters:
+    ///   - item: The item definition.
+    ///   - account: The account the item is stored under.
+    /// - Returns: The stored value, or ``KeychainItemProtocol/defaultValue`` when no item exists.
+    /// - Throws: ``KeychainError/decodingError(_:)`` when the stored data cannot be decoded,
+    ///   or ``KeychainError/securityError(_:)`` when the store cannot be queried.
+    func value<Item>(forItem item: Item.Type, account: String) throws(KeychainError) -> Item.Value where Item: KeychainItemProtocol
 
-    /// Inserts or updates the value for the given key.
+    /// Inserts or updates the item's value for the given account.
     ///
-    /// - Throws: A ``KeychainError`` when the store cannot be updated.
-    func updateValue(_ value: Value, forKey key: Key) throws(KeychainError)
+    /// A value whose ``KeychainRepresentable/keychainRepresentation`` is `nil`, such as
+    /// `Optional.none`, removes the item instead. Subsequent reads then return
+    /// ``KeychainItemProtocol/defaultValue``, which is not necessarily `nil`.
+    ///
+    /// - Parameters:
+    ///   - value: The value to store.
+    ///   - item: The item definition.
+    ///   - account: The account the item is stored under.
+    /// - Throws: ``KeychainError/encodingError(_:)`` when the value cannot be encoded,
+    ///   or ``KeychainError/securityError(_:)`` when the store cannot be updated.
+    func updateValue<Item>(_ value: Item.Value, forItem item: Item.Type, account: String) throws(KeychainError) where Item: KeychainItemProtocol
 
-    /// Removes the value for the given key.
+    /// Removes the item's value for the given account.
     ///
     /// Removing an absent item is not an error.
     ///
-    /// - Throws: A ``KeychainError`` when the store cannot be modified.
-    func removeValue(forKey key: Key) throws(KeychainError)
+    /// - Parameters:
+    ///   - item: The item definition.
+    ///   - account: The account the item is stored under.
+    /// - Throws: ``KeychainError/securityError(_:)`` when the store cannot be modified.
+    func removeValue<Item>(forItem item: Item.Type, account: String) throws(KeychainError) where Item: KeychainItemProtocol
 }
 
 extension KeychainProtocol {
 
-    /// Accesses the value for the given key, discarding any errors.
+    /// Accesses the item's value for the given account, logging and discarding any errors.
     ///
-    /// Reading returns `nil` when the item is absent or the read fails; use
-    /// ``value(forKey:)`` to distinguish the two. Writing a value inserts or updates the
-    /// item; writing `nil` removes it. A failed write is logged and discarded — use
-    /// ``updateValue(_:forKey:)`` or ``removeValue(forKey:)`` when failure must be
-    /// observable.
-    public subscript(key: Key) -> Value? {
+    /// Reading returns ``KeychainItemProtocol/defaultValue`` both when no item exists and
+    /// when the read fails; use ``value(forItem:account:)`` to distinguish the two, for
+    /// example to tell an absent item from a locked device. Writing behaves like
+    /// ``updateValue(_:forItem:account:)``, including removal when the value is `nil`.
+    ///
+    /// ```swift
+    /// keychain[AuthTokenItem.self, account: userID] = "abc123"
+    /// let token = keychain[AuthTokenItem.self, account: userID]
+    /// ```
+    ///
+    /// - Parameters:
+    ///   - item: The item definition. May be inferred from the context.
+    ///   - account: The account the item is stored under.
+    public subscript<Item>(item: Item.Type = Item.self, account account: String) -> Item.Value where Item: KeychainItemProtocol {
         get {
             do {
-                return try self.value(forKey: key)
+                return try self.value(forItem: Item.self, account: account)
             } catch {
-                Logger.keychain.error("Attempted to read \(key) but received error instead: \(error)")
+                Logger.keychain.error("Attempted to read \(_typeName(Item.self)) but received error instead: \(error)")
             }
 
-            return nil
+            return Item.defaultValue
         }
         nonmutating set {
-            if let newValue = newValue {
-                do {
-                    try self.updateValue(newValue, forKey: key)
-                } catch {
-                    Logger.keychain.error("Attempted to update \(key) but received error instead: \(error)")
-                }
-            } else {
-                do {
-                    try self.removeValue(forKey: key)
-                } catch {
-                    Logger.keychain.error("Attempted to update \(key) but received error instead: \(error)")
-                }
+            do {
+                try self.updateValue(newValue, forItem: Item.self, account: account)
+            } catch {
+                Logger.keychain.error("Attempted to update \(_typeName(Item.self)) but received error instead: \(error)")
             }
         }
-    }
-
-    /// Reads the value for the given key, returning a default when the item is absent or
-    /// the read fails.
-    ///
-    /// The default is not written to the keychain; subsequent reads evaluate it again
-    /// until a value is stored for the key.
-    public subscript(key: Key, default defaultValue: @autoclosure () -> Value) -> Value {
-        do {
-            if let value = try self.value(forKey: key) {
-                return value
-            } else {
-                return defaultValue()
-            }
-        } catch {
-            Logger.keychain.error("Attempted to read \(key) but received error instead: \(error)")
-        }
-
-        return defaultValue()
     }
 }
