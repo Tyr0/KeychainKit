@@ -18,6 +18,11 @@ internal import Security
 ///   fail with ``KeychainInterfaceError/missingEntitlement``.
 public struct SystemKeychainInterface: KeychainInterfaceProtocol {
 
+    // MARK: - Static Properties
+
+    /// The shared system keychain interface.
+    public static let `default` = SystemKeychainInterface()
+
     // MARK: - Lifecycle Functions
 
     /// Creates a system keychain interface.

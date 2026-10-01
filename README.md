@@ -4,7 +4,7 @@ A lightweight, observable, type-safe interface to the system keychain on Apple p
 
 ![License](https://img.shields.io/badge/License-MIT-green.svg)
 ![Platforms](https://img.shields.io/badge/Platforms-iOS%20%7C%20macOS%20%7C%20tvOS%20%7C%20visionOS%20%7C%20watchOS-blue.svg)
-![Swift](https://img.shields.io/badge/Swift-6.1-orange.svg)
+![Swift](https://img.shields.io/badge/Swift-6.3-orange.svg)
 
 ## Overview
 
@@ -18,7 +18,7 @@ A lightweight, observable, type-safe interface to the system keychain on Apple p
 
 ## Requirements
 
-- Swift 6.1+
+- Swift 6.3+
 - iOS 18+ / macOS 15+ / tvOS 18+ / visionOS 2+ / watchOS 11+
 
 ## Installation

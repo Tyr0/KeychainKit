@@ -4,6 +4,8 @@ import Observation
 
 internal import os.lock
 
+private let DefaultSystemKeychain: Keychain<SystemKeychainInterface> = Keychain()
+
 /// A ``KeychainProtocol`` implementation backed by the provided ``KeychainInterfaceProtocol``.
 ///
 /// Use ``init(accessGroup:)`` for the system keychain, or inject another interface, such
@@ -40,6 +42,11 @@ internal import os.lock
 /// first, the update is retried once. These steps are not an atomic transaction across
 /// writers.
 public final class Keychain<Interface>: KeychainProtocol, Sendable where Interface: KeychainInterfaceProtocol {
+
+    /// The shared keychain backed by `SystemKeychainInterface.default`.
+    public static var `default`: Keychain<SystemKeychainInterface> {
+        return DefaultSystemKeychain
+    }
 
     // MARK: - Properties
 
@@ -243,6 +250,14 @@ extension Keychain where Interface == SystemKeychainInterface {
     ///     default group on insertion and every group on reads, updates, and removals.
     @inlinable
     public convenience init(accessGroup: String? = nil) {
-        self.init(accessGroup: accessGroup, interface: Interface())
+        self.init(accessGroup: accessGroup, interface: .default)
+    }
+}
+
+extension KeychainProtocol {
+
+    /// The shared keychain backed by `SystemKeychainInterface.default`.
+    public static var `default`: Keychain<SystemKeychainInterface> {
+        return DefaultSystemKeychain
     }
 }

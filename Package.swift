@@ -1,4 +1,4 @@
-// swift-tools-version: 6.1
+// swift-tools-version: 6.3
 // The swift-tools-version declares the minimum version of Swift required to build this package.
 
 import PackageDescription
@@ -15,16 +15,37 @@ let package = Package(
     products: [
         .library(
             name: "KeychainKit",
-            targets: ["KeychainKit"]
+            targets: [
+                "KeychainKit",
+            ],
+        ),
+        .library(
+            name: "KeychainKit_SwiftUI",
+            targets: [
+                "KeychainKit_SwiftUI",
+            ],
         ),
     ],
     targets: [
         .target(
-            name: "KeychainKit"
+            name: "KeychainKit",
+        ),
+        .target(
+            name: "KeychainKit_SwiftUI",
+            dependencies: [
+                "KeychainKit",
+            ],
         ),
         .testTarget(
             name: "KeychainKitTests",
             dependencies: ["KeychainKit"]
+        ),
+        .testTarget(
+            name: "KeychainKit_SwiftUITests",
+            dependencies: [
+                "KeychainKit",
+                "KeychainKit_SwiftUI",
+            ],
         ),
     ],
     swiftLanguageModes: [.v6]
