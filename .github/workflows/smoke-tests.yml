@@ -1,0 +1,25 @@
+name: Smoke Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-test:
+    runs-on: xcode-27
+    steps:
+      - uses: actions/checkout@v5
+      - run: swift build
+      - run: swift test
+
+  swiftlint:
+    runs-on: ubuntu-latest
+    container: ghcr.io/realm/swiftlint:latest
+    steps:
+      - uses: actions/checkout@v5
+      - run: swiftlint lint --reporter github-actions-logging
