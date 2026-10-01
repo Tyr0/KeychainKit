@@ -1,4 +1,3 @@
-
 extension Dictionary {
 
     func mapKeys<Transformed, Failure>(_ transform: (Key) throws(Failure) -> Transformed) throws(Failure) -> Dictionary<Transformed, Value> where Transformed: Hashable {

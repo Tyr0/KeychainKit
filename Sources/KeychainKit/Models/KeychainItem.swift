@@ -1,4 +1,3 @@
-
 internal import os.log
 
 /// A property wrapper type that reflects a value from a ``KeychainItemProtocol``.

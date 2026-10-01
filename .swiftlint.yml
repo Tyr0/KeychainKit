@@ -1,0 +1,17 @@
+disabled_rules:
+- cyclomatic_complexity
+- function_body_length
+- generic_type_name
+- line_length
+- multiple_closures_with_trailing_closure
+- nesting
+- optional_data_string_conversion
+- syntactic_sugar
+- trailing_comma
+- unneeded_synthesized_initializer
+
+file_length: 1000
+
+strict: true
+
+type_body_length: 1000

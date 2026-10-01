@@ -1,4 +1,3 @@
-
 import Foundation
 import Observation
 import os.lock
@@ -124,10 +123,8 @@ final class MockKeychainInterface: ObservableKeychainInterfaceProtocol {
                 throw error
             }
 
-            for (key, value) in state.storage {
-                if key.matches(query: query) {
-                    return value
-                }
+            for (key, value) in state.storage where key.matches(query: query) {
+                return value
             }
 
             throw .itemNotFound
@@ -193,7 +190,7 @@ final class MockKeychainInterface: ObservableKeychainInterfaceProtocol {
 
             var itemFound: Bool = false
 
-            state.storage = state.storage.filter { key, value in
+            state.storage = state.storage.filter { key, _ in
                 guard key.matches(query: query) else {
                     return true
                 }

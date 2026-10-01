@@ -1,4 +1,3 @@
-
 import os.lock
 
 extension OSAllocatedUnfairLock {

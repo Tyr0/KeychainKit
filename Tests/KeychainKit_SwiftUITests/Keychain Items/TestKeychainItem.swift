@@ -1,4 +1,3 @@
-
 import KeychainKit
 
 enum TestKeychainItem: KeychainItemProtocol {

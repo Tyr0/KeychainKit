@@ -1,4 +1,3 @@
-
 /// A typed keychain item definition for interfacing with a ``KeychainProtocol``.
 ///
 /// Conform a type for each kind of secret, then read and write it per account:

@@ -1,4 +1,3 @@
-
 import Foundation
 import Observation
 
@@ -95,7 +94,7 @@ public final class Keychain<Interface>: KeychainProtocol, Sendable where Interfa
 
     // MARK: - Private Functions
 
-    private subscript(observationKeyPathForAccount account: String, service service: String) -> Void {
+    private subscript(observationKeyPathForAccount account: String, service service: String) -> Void { // swiftlint:disable:this redundant_void_return
         fatalError()
     }
 
@@ -136,7 +135,7 @@ public final class Keychain<Interface>: KeychainProtocol, Sendable where Interfa
         )
     }
 
-    private func makeUpdateAttributes<Item>(_ item: Item.Type = Item.self) -> KeychainAttributes.Modifications where Item: KeychainItemProtocol  {
+    private func makeUpdateAttributes<Item>(_ item: Item.Type = Item.self) -> KeychainAttributes.Modifications where Item: KeychainItemProtocol {
         return KeychainAttributes.Modifications()
     }
 

@@ -1,4 +1,3 @@
-
 import Foundation
 
 /// Search criteria selecting generic password items.

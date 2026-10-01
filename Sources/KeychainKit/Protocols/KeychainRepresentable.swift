@@ -1,4 +1,3 @@
-
 import Foundation
 
 /// A value that can be stored as the data of a keychain item.

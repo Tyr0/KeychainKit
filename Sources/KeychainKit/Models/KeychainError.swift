@@ -1,4 +1,3 @@
-
 import Foundation
 
 /// An error raised by a ``KeychainProtocol`` operation.

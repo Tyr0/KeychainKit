@@ -1,4 +1,3 @@
-
 /// The attributes of a stored generic password item.
 ///
 /// An item's access group, account, service, and synchronizable flag together form its

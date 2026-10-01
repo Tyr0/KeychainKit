@@ -1,4 +1,3 @@
-
 internal import os.lock
 
 extension OSAllocatedUnfairLock where State == Void {

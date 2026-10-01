@@ -1,4 +1,3 @@
-
 internal import os.log
 
 extension Logger {

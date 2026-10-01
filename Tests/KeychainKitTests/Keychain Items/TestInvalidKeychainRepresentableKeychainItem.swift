@@ -1,7 +1,6 @@
-
 import KeychainKit
 
-enum TestInvalidKeychainRepresentableKeychainItem: KeychainItemProtocol {
+enum TestInvalidKeychainRepresentableKeychainItem: KeychainItemProtocol { // swiftlint:disable:this type_name
 
     static let defaultValue: TestInvalidKeychainRepresentable = TestInvalidKeychainRepresentable()
 
