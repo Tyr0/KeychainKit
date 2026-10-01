@@ -1,5 +1,6 @@
 
 import Foundation
+import Observation
 
 internal import os.log
 internal import Security
@@ -22,6 +23,9 @@ public struct SystemKeychainInterface: KeychainInterfaceProtocol {
 
     /// The shared system keychain interface.
     public static let `default` = SystemKeychainInterface()
+
+    // Every value addresses the same system keychain, so all values share one registrar.
+    private static let sharedObservationRegistrar: ObservationRegistrar = ObservationRegistrar()
 
     // MARK: - Lifecycle Functions
 
@@ -165,5 +169,14 @@ public struct SystemKeychainInterface: KeychainInterfaceProtocol {
         try Self.withSecurityInvocation {
             return SecItemDelete(matching as CFDictionary)
         }
+    }
+}
+
+extension SystemKeychainInterface: ObservableKeychainInterfaceProtocol {
+
+    // MARK: - ObservableKeychainInterfaceProtocol Conformance
+
+    var observationRegistrar: ObservationRegistrar {
+        return Self.sharedObservationRegistrar
     }
 }

@@ -1,9 +1,11 @@
 
 import Foundation
-import KeychainKit
+import Observation
 import os.lock
 
-final class MockKeychainInterface: KeychainInterfaceProtocol {
+@testable import KeychainKit
+
+final class MockKeychainInterface: ObservableKeychainInterfaceProtocol {
 
     private struct ResolvedIdentifier: Equatable, Hashable, Sendable {
 
@@ -81,6 +83,8 @@ final class MockKeychainInterface: KeychainInterfaceProtocol {
     }
 
     // MARK: - Properties
+
+    let observationRegistrar: ObservationRegistrar = ObservationRegistrar()
 
     private let state: OSAllocatedUnfairLock<State>
 

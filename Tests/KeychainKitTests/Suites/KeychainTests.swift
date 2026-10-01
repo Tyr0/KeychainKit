@@ -323,6 +323,35 @@ struct KeychainTests {
 
             try await unwrap(itemValue)
         }
+
+        @Test(arguments: TestConstants.keychainItemValues)
+        func testObservation_UpdateThroughOtherKeychain_Observes(_ itemValue: any KeychainItemValueProtocol) async throws {
+            func projection<Item>(_ item: Item.Type, value: Item.Value) async throws where Item: KeychainItemProtocol {
+                try await withKeychain { keychain in
+                    let otherKeychain = Keychain(accessGroup: "OtherAccessGroup", interface: keychain.interface)
+
+                    try await confirmation { confirmation in
+                        withObservationTracking({
+                            #expect(throws: Never.self) {
+                                try keychain.value(forItem: Item.self, account: TestConstants.testAccount)
+                            }
+                        }, onChange: {
+                            confirmation()
+                        })
+
+                        try otherKeychain.updateValue(value, forItem: Item.self, account: TestConstants.testAccount)
+                    }
+
+                    try otherKeychain.removeValue(forItem: Item.self, account: TestConstants.testAccount)
+                }
+            }
+
+            func unwrap<ItemValue>(_ itemValue: ItemValue) async throws where ItemValue: KeychainItemValueProtocol {
+                try await projection(ItemValue.Item.self, value: itemValue.value)
+            }
+
+            try await unwrap(itemValue)
+        }
     }
 }
 

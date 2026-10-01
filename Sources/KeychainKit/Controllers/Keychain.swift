@@ -4,12 +4,11 @@ import Observation
 
 internal import os.lock
 
-private let DefaultSystemKeychain: Keychain<SystemKeychainInterface> = Keychain()
-
 /// A ``KeychainProtocol`` implementation backed by the provided ``KeychainInterfaceProtocol``.
 ///
-/// Use ``init(accessGroup:)`` for the system keychain, or inject another interface, such
-/// as an in-memory mock, with ``init(accessGroup:interface:)``.
+/// Use ``default``, `Keychain()`, or `Keychain(accessGroup:)` for the system keychain, or
+/// inject another interface, such as an in-memory mock, with
+/// `Keychain(accessGroup:interface:)`.
 ///
 /// ## Storage
 ///
@@ -29,8 +28,17 @@ private let DefaultSystemKeychain: Keychain<SystemKeychainInterface> = Keychain(
 /// changed. `willSet` is delivered before the lock is taken and `didSet` after it is
 /// released, so observers may read from this instance.
 ///
-/// Changes made by other writers, including other `Keychain` instances, do not notify
-/// this instance's observers.
+/// Every `Keychain<SystemKeychainInterface>` created through `Keychain()`,
+/// `Keychain(accessGroup:)`, or `Keychain(accessGroup:interface:)` with a concrete
+/// ``SystemKeychainInterface`` shares observation, so updates and removals through any of
+/// them notify readers of the same service and account on all of them, regardless of
+/// access group. Generic code that creates a `Keychain<Interface>` resolves to the
+/// unconstrained initializer and does not share observation, even when `Interface` is
+/// ``SystemKeychainInterface``. Keychains backed by any other interface notify only
+/// their own observers.
+///
+/// Changes made by other writers, such as other processes or direct interface calls, do
+/// not notify observers.
 ///
 /// ## Concurrency
 ///
@@ -43,11 +51,6 @@ private let DefaultSystemKeychain: Keychain<SystemKeychainInterface> = Keychain(
 /// writers.
 public final class Keychain<Interface>: KeychainProtocol, Sendable where Interface: KeychainInterfaceProtocol {
 
-    /// The shared keychain backed by `SystemKeychainInterface.default`.
-    public static var `default`: Keychain<SystemKeychainInterface> {
-        return DefaultSystemKeychain
-    }
-
     // MARK: - Properties
 
     /// The access group items are scoped to.
@@ -59,7 +62,8 @@ public final class Keychain<Interface>: KeychainProtocol, Sendable where Interfa
     /// The store performing keychain operations.
     public let interface: Interface
 
-    private let observationRegistrar: ObservationRegistrar = ObservationRegistrar()
+    /// The observation store which should be notified of queries and modifications.
+    private let observationRegistrar: ObservationRegistrar
 
     private let state: OSAllocatedUnfairLock<Void>
 
@@ -71,10 +75,22 @@ public final class Keychain<Interface>: KeychainProtocol, Sendable where Interfa
     ///   - accessGroup: The access group to scope items to, or `nil` for the app's
     ///     default group on insertion and every group on reads, updates, and removals.
     ///   - interface: The store performing keychain operations.
-    public init(accessGroup: String? = nil, interface: Interface) {
+    ///   - observationRegistrar: The observation store which should be notified of queries and modifications.
+    private init(accessGroup: String? = nil, interface: Interface, observationRegistrar: ObservationRegistrar) {
         self.accessGroup = accessGroup
         self.interface = interface
+        self.observationRegistrar = observationRegistrar
         self.state = OSAllocatedUnfairLock()
+    }
+
+    /// Creates a keychain backed by the given interface.
+    ///
+    /// - Parameters:
+    ///   - accessGroup: The access group to scope items to, or `nil` for the app's
+    ///     default group on insertion and every group on reads, updates, and removals.
+    ///   - interface: The store performing keychain operations.
+    public convenience init(accessGroup: String? = nil, interface: Interface) {
+        self.init(accessGroup: accessGroup, interface: interface, observationRegistrar: ObservationRegistrar())
     }
 
     // MARK: - Private Functions
@@ -241,6 +257,9 @@ public final class Keychain<Interface>: KeychainProtocol, Sendable where Interfa
 
 extension Keychain where Interface == SystemKeychainInterface {
 
+    /// The shared keychain backed by `SystemKeychainInterface.default`.
+    public static let `default`: Keychain<SystemKeychainInterface> = Keychain<SystemKeychainInterface>(accessGroup: nil, interface: .default)
+
     // MARK: - Lifecycle Functions
 
     /// Creates a keychain backed by the system keychain.
@@ -248,16 +267,23 @@ extension Keychain where Interface == SystemKeychainInterface {
     /// - Parameters:
     ///   - accessGroup: The access group to scope items to, or `nil` for the app's
     ///     default group on insertion and every group on reads, updates, and removals.
-    @inlinable
-    public convenience init(accessGroup: String? = nil) {
-        self.init(accessGroup: accessGroup, interface: .default)
+    ///   - interface: The system keychain interface.
+    public convenience init(accessGroup: String? = nil, interface: Interface = .default) {
+        self.init(accessGroup: accessGroup, interface: interface, observationRegistrar: interface.observationRegistrar)
     }
 }
 
-extension KeychainProtocol {
+extension Keychain where Interface: ObservableKeychainInterfaceProtocol {
 
-    /// The shared keychain backed by `SystemKeychainInterface.default`.
-    public static var `default`: Keychain<SystemKeychainInterface> {
-        return DefaultSystemKeychain
+    // MARK: - Lifecycle Functions
+
+    /// Creates a keychain that shares observation with every keychain backed by the same storage.
+    ///
+    /// - Parameters:
+    ///   - accessGroup: The access group to scope items to, or `nil` for the app's
+    ///     default group on insertion and every group on reads, updates, and removals.
+    ///   - interface: The store performing keychain operations.
+    internal convenience init(accessGroup: String? = nil, interface: Interface) {
+        self.init(accessGroup: accessGroup, interface: interface, observationRegistrar: interface.observationRegistrar)
     }
 }

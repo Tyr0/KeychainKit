@@ -135,8 +135,10 @@ struct AccountView: View {
 }
 ```
 
-Writes and removals through a `Keychain` instance invalidate readers of the same service and account on that instance.
-Other writers, including other `Keychain` instances, do not trigger these notifications; a subsequent read retrieves their changes, so share one instance across your app.
+Writes and removals invalidate readers of the same service and account across every system-backed `Keychain` instance, whether created with `Keychain.default`, `Keychain()`, or `Keychain(accessGroup:)`.
+Notifications are not scoped by access group, so a write in one group also invalidates readers in another.
+A `Keychain` created in generic code (`Keychain<Interface>(interface:)`) and keychains backed by other interfaces notify only their own readers.
+Other processes, such as app extensions, do not trigger these notifications; a subsequent read retrieves their changes.
 Notifications also occur for equal-value writes, absent-item removals, and failed operations, so a notification is not proof that storage changed.
 
 ### Access Groups
