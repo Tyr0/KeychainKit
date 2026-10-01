@@ -42,6 +42,8 @@ Then add `KeychainKit` to your target:
 ),
 ```
 
+For SwiftUI bindings, add `KeychainKit_SwiftUI` as well. It re-exports `KeychainKit` and `SwiftUI`.
+
 ## Usage
 
 Define a type for each secret. Its service identifies the item in the keychain, and its default value is returned when nothing is stored:
@@ -89,6 +91,105 @@ extension Credential: KeychainRepresentable {
 ```
 
 Writing a value whose representation is `nil`, such as `Optional.none`, removes the item. Subsequent reads return the item's `defaultValue`, which is not necessarily `nil`.
+
+### Property Wrapper
+
+Use `@KeychainItem` to read and write an item as a property. By default, the wrapper uses `Keychain.default`:
+
+```swift
+struct Session {
+
+    @KeychainItem(AuthTokenItem.self, account: "primary")
+    var authToken: String?
+}
+
+let session = Session()
+session.authToken = "abc123"
+```
+
+`Keychain.default` does not set an access group: new items are inserted into the app's first access group, while reads, updates, and removals match items in every group the app belongs to.
+To share an item with an app extension, pass a keychain scoped to a shared group:
+
+```swift
+extension Keychain where Interface == SystemKeychainInterface {
+
+    // Observation is shared between every `Keychain<SystemKeychainInterface>`,
+    // regardless of access group. A write through `.shared` also invalidates
+    // readers of the same service and account through `.default`.
+    static let shared = Keychain(accessGroup: "TEAMID.com.example.shared")
+}
+
+struct Session {
+
+    @KeychainItem(AuthTokenItem.self, keychain: .shared, account: "primary")
+    var authToken: String?
+}
+```
+
+Sharing observation keeps every system-backed keychain consistent, at the cost of extra invalidations when items in different groups share a service and account. Those readers re-query the keychain and receive their own group's value.
+
+Supply any other `KeychainProtocol` implementation, such as a mock in tests, the same way. Initialize the backing wrapper when the keychain or account is provided at runtime:
+
+```swift
+struct Session<Keychain> where Keychain: KeychainProtocol {
+
+    @KeychainItem<Keychain, AuthTokenItem>
+    var authToken: String?
+
+    init(keychain: Keychain, userID: String) {
+        self._authToken = KeychainItem(keychain: keychain, account: userID)
+    }
+}
+```
+
+Like the subscript, the wrapper logs and discards errors: a failed read returns the default value, and a failed write leaves storage unchanged. Use the keychain's throwing methods when failure must be handled.
+
+### SwiftUI Bindings
+
+Add the `KeychainKit_SwiftUI` library product to your target and import it. A common use is a settings screen where the user enters a credential, such as an API key for a self-hosted server, keyed by the server's host:
+
+```swift
+import KeychainKit_SwiftUI
+
+enum ServerAPIKeyItem: KeychainItemProtocol {
+
+    static let defaultValue: String = ""
+
+    static let service: String = "com.example.server-api-key"
+}
+
+struct ServerSettingsView: View {
+
+    @KeychainItem<Keychain<SystemKeychainInterface>, ServerAPIKeyItem>
+    private var apiKey: String
+
+    init(host: String) {
+        self._apiKey = KeychainItem(account: host)
+    }
+
+    var body: some View {
+        Form {
+            Section("Server") {
+                SecureField("API Key", text: self._apiKey.binding)
+            }
+        }
+    }
+}
+```
+
+The binding reads and writes the same keychain as the wrapped property; reads participate in Swift Observation.
+Every edit is written to the keychain immediately, and clearing the field stores an empty string rather than removing the item.
+
+For optional values, unwrap the binding with SwiftUI's `Binding(_:)` initializer. It returns `nil` while the item is absent, so this pattern edits an existing value only:
+
+```swift
+if let token = Binding(self._authToken.binding) {
+    SecureField("Token", text: token)
+}
+```
+
+> [!NOTE]
+> Use `_apiKey.binding`, or `_apiKey.projectedValue`, to obtain the binding. The SwiftUI extension does not provide a `$apiKey` accessor [due to missing support in the Swift compiler](https://forums.swift.org/t/property-wrapper-projectedvalue-cannot-be-in-a-extension/70269).
 
 ### Handling Errors
 
